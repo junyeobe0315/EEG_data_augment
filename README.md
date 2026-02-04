@@ -71,12 +71,13 @@ conda run -n EEG --no-capture-output python scripts/11_validate_pipeline.py --sm
 Detailed rules are in `PROTOCOL.md`.
 
 - Split: `T -> train/val`, `E -> test`.
-- Low-data applies to `T_train` only.
+- Low-data applies to `T_train` only (`r = 0.01, 0.05, 0.10, 0.20, 1.00`; `1.00` is full-data baseline).
 - Fit-only-on-train: normalization, FBCSP, generator, QC statistics.
 - Hyperparameter/model selection on `T_val` only.
 - `E_test` is final reporting only.
 - Deep classifiers use fixed-step control to remove the “more data => more optimizer steps” confound.
-- Generator checkpoint is selected with deterministic `T_val` proxy (`runs/gen/.../ckpt_scores.json`, `training_meta.json`).
+- Classifier training uses condition-stable seeds, so partial reruns keep identical augmentation sampling behavior.
+- Generator checkpoint is selected with deterministic `T_val` proxy (`runs/gen/.../ckpt_scores.json`, `training_meta.json`). 
 
 ## Output Files (Main)
 - Per-run metrics: `results/metrics/clf_cross_session.csv`

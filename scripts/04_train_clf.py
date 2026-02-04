@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -92,6 +93,35 @@ def _condition_name(mode: str, gen_model: str | None = None) -> str:
     return f"Other_{mode}"
 
 
+def _stable_condition_seed(
+    base_seed: int,
+    split_stem: str,
+    subject: int,
+    p: float,
+    clf_model: str,
+    mode: str,
+    ratio: float,
+    gen_model: str,
+    qc_on: bool,
+) -> int:
+    payload = json.dumps(
+        {
+            "split": split_stem,
+            "subject": int(subject),
+            "p": float(p),
+            "clf_model": str(clf_model),
+            "mode": str(mode),
+            "ratio": float(ratio),
+            "gen_model": str(gen_model),
+            "qc_on": bool(qc_on),
+        },
+        sort_keys=True,
+        ensure_ascii=True,
+    )
+    digest = int(hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8], 16)
+    return int((int(base_seed) + digest) % (2**32 - 1))
+
+
 def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
     seed = int(split.get("seed", -1))
     p = float(split.get("low_data_frac", 1.0))
@@ -150,7 +180,6 @@ def main() -> None:
         if not _in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
             continue
         seed = int(split["seed"])
-        set_seed(seed)
         subject = int(split.get("subject", -1))
         p = float(split.get("low_data_frac", 1.0))
 
@@ -162,6 +191,18 @@ def main() -> None:
             for mode in modes:
                 if mode == "none":
                     ratio = 0.0
+                    run_seed = _stable_condition_seed(
+                        base_seed=seed,
+                        split_stem=sf.stem,
+                        subject=subject,
+                        p=p,
+                        clf_model=clf_model,
+                        mode=mode,
+                        ratio=ratio,
+                        gen_model="none",
+                        qc_on=False,
+                    )
+                    set_seed(run_seed)
                     exp_id = make_exp_id(
                         "clf",
                         split=sf.stem,
@@ -195,6 +236,7 @@ def main() -> None:
                             "gen_model": "none",
                             "condition": _condition_name(mode=mode),
                             "mode": mode,
+                            "run_seed": run_seed,
                             "ratio": ratio,
                             "alpha_tilde": float(ratio / (1.0 + ratio)),
                             "qc_on": False,
@@ -211,6 +253,18 @@ def main() -> None:
                         ratio = float(ratio)
                         if ratio <= 0:
                             continue
+                        run_seed = _stable_condition_seed(
+                            base_seed=seed,
+                            split_stem=sf.stem,
+                            subject=subject,
+                            p=p,
+                            clf_model=clf_model,
+                            mode=mode,
+                            ratio=ratio,
+                            gen_model="none",
+                            qc_on=False,
+                        )
+                        set_seed(run_seed)
 
                         exp_id = make_exp_id(
                             "clf",
@@ -245,6 +299,7 @@ def main() -> None:
                                 "gen_model": "none",
                                 "condition": _condition_name(mode=mode),
                                 "mode": mode,
+                                "run_seed": run_seed,
                                 "ratio": ratio,
                                 "alpha_tilde": float(ratio / (1.0 + ratio)),
                                 "qc_on": False,
@@ -264,6 +319,18 @@ def main() -> None:
 
                         for gen_model in gen_models:
                             for qc_on in qc_on_list:
+                                run_seed = _stable_condition_seed(
+                                    base_seed=seed,
+                                    split_stem=sf.stem,
+                                    subject=subject,
+                                    p=p,
+                                    clf_model=clf_model,
+                                    mode=mode,
+                                    ratio=ratio,
+                                    gen_model=gen_model,
+                                    qc_on=bool(qc_on),
+                                )
+                                set_seed(run_seed)
                                 synth_npz = _find_synth_npz(
                                     ROOT,
                                     gen_model=gen_model,
@@ -311,6 +378,7 @@ def main() -> None:
                                         "gen_model": gen_model,
                                         "condition": _condition_name(mode=mode, gen_model=gen_model),
                                         "mode": mode,
+                                        "run_seed": run_seed,
                                         "ratio": ratio,
                                         "alpha_tilde": float(ratio / (1.0 + ratio)),
                                         "qc_on": bool(qc_on),

@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +76,50 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _active_ratio_list(sweep_cfg: dict) -> list[float]:
+    ratios = [float(x) for x in sweep_cfg.get("ratio_list", [0.0])]
+    stage = str(sweep_cfg.get("stage_mode", "full"))
+    if stage == "full":
+        full_ratios = sweep_cfg.get("full_stage_ratios")
+        if full_ratios is not None:
+            ratios = [float(x) for x in full_ratios]
+    return ratios
+
+
+def _resolve_n_per_class(
+    run_cfg: dict,
+    y_real_train: np.ndarray,
+    num_classes: int,
+    sweep_cfg: dict,
+    qc_cfg: dict,
+) -> tuple[int, dict]:
+    base_n = int(run_cfg["sample"].get("n_per_class", 300))
+    dynamic = bool(run_cfg["sample"].get("dynamic_n_per_class", True))
+    buffer = float(run_cfg["sample"].get("dynamic_buffer", 1.2))
+    max_ratio = max([r for r in _active_ratio_list(sweep_cfg) if r > 0.0], default=0.0)
+
+    expected_keep = float(qc_cfg.get("target_keep_ratio", 1.0))
+    expected_keep = min(max(expected_keep, 0.05), 1.0)
+    counts = np.bincount(y_real_train.astype(np.int64), minlength=int(num_classes))
+    max_real_class = int(counts.max()) if len(counts) > 0 else 0
+
+    resolved = int(base_n)
+    if dynamic and max_ratio > 0 and max_real_class > 0:
+        required = int(np.ceil((max_ratio * max_real_class / expected_keep) * max(buffer, 1.0)))
+        resolved = max(base_n, required)
+
+    meta = {
+        "sample_n_per_class_base": int(base_n),
+        "sample_n_per_class_effective": int(resolved),
+        "sample_n_per_class_dynamic": bool(dynamic),
+        "sample_n_per_class_dynamic_buffer": float(buffer),
+        "max_ratio_for_sampling": float(max_ratio),
+        "expected_qc_keep_ratio": float(expected_keep),
+        "max_real_class_count": int(max_real_class),
+    }
+    return resolved, meta
+
+
 def main() -> None:
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
@@ -124,19 +169,27 @@ def main() -> None:
                 print(f"Skip split {sf.name}, gen={gen_model}: checkpoint not found")
                 continue
 
+            x_real_train, y_real_train = load_samples_by_ids(index_df, split["train_ids"])
+            n_per_class, sample_meta = _resolve_n_per_class(
+                run_cfg=run_cfg,
+                y_real_train=y_real_train,
+                num_classes=len(data_cfg["class_names"]),
+                sweep_cfg=sweep_cfg,
+                qc_cfg=qc_cfg,
+            )
+
             synth_seed = int(seed + 1000)
             qc_seed = int(seed + 2000)
             set_seed(synth_seed)
             synth = sample_by_class(
                 ckpt_path=ckpt_path,
-                n_per_class=int(run_cfg["sample"].get("n_per_class", 300)),
+                n_per_class=int(n_per_class),
                 num_classes=len(data_cfg["class_names"]),
                 device=run_cfg["train"].get("device", "cpu"),
             )
             synth_path = synth_dir / f"synth_{gen_model}_{sf.stem}.npz"
             save_synth_npz(synth_path, synth)
 
-            x_real_train, y_real_train = load_samples_by_ids(index_df, split["train_ids"])
             set_seed(qc_seed)
             kept, report = run_qc(
                 real_x=x_real_train,
@@ -158,11 +211,12 @@ def main() -> None:
                 "generator_ckpt_sha256": _sha256_file(ckpt_path),
                 "synth_seed": synth_seed,
                 "qc_seed": qc_seed,
-                "sample_n_per_class": int(run_cfg["sample"].get("n_per_class", 300)),
+                "sample_n_per_class": int(n_per_class),
                 "ddpm_steps": int(run_cfg["sample"].get("ddpm_steps", 0)),
                 "n_synth_before_qc": int(report.get("n_before", synth["X"].shape[0])),
                 "n_synth_after_qc": int(report.get("n_after", kept["X"].shape[0])),
                 "qc_keep_ratio": float(report.get("keep_ratio", 0.0)),
+                **sample_meta,
             }
             with open(synth_path.with_suffix(".meta.json"), "w", encoding="utf-8") as f:
                 json.dump(synth_meta, f, ensure_ascii=True, indent=2)

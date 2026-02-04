@@ -74,6 +74,8 @@ train:
 sample:
   n_per_class: 300
   ddpm_steps: 100
+  dynamic_n_per_class: true
+  dynamic_buffer: 1.2
 
 checkpoint_selection:
   enabled: true

@@ -21,7 +21,7 @@ Note:
 ## 3) Low-Data Setting
 Low-data fraction `r` is applied to **`T_train` only**.
 
-Default: `r in {0.01, 0.05, 0.10, 0.20}`
+Default: `r in {0.01, 0.05, 0.10, 0.20, 1.00}` (`1.00` is the full-data reference)
 
 - `T_val` remains full.
 - `E_test` remains full.
@@ -70,6 +70,7 @@ Artifacts:
 
 ## 7) Determinism and Logging
 - Global seed control for Python/NumPy/Torch/CUDA.
+- Classifier runs use condition-stable seeds (`seed + hash(split, model, mode, ratio, generator, qc)`), so partial reruns do not change random augmentation behavior.
 - Sampling/QC deterministic seeds are logged (`synth_seed`, `qc_seed`).
 - Synthetic metadata includes generator ckpt path/hash and sampling params.
 
