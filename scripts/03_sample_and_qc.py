@@ -76,6 +76,29 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _stable_sampling_seed(
+    base_seed: int,
+    split_stem: str,
+    subject: int | str,
+    p: float,
+    gen_model: str,
+    stage: str,
+) -> int:
+    payload = json.dumps(
+        {
+            "split": str(split_stem),
+            "subject": str(subject),
+            "p": float(p),
+            "gen_model": str(gen_model),
+            "stage": str(stage),
+        },
+        sort_keys=True,
+        ensure_ascii=True,
+    )
+    digest = int(hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8], 16)
+    return int((int(base_seed) + digest) % (2**32 - 1))
+
+
 def _active_ratio_list(sweep_cfg: dict) -> list[float]:
     ratios = [float(x) for x in sweep_cfg.get("ratio_list", [0.0])]
     stage = str(sweep_cfg.get("stage_mode", "full"))
@@ -178,8 +201,22 @@ def main() -> None:
                 qc_cfg=qc_cfg,
             )
 
-            synth_seed = int(seed + 1000)
-            qc_seed = int(seed + 2000)
+            synth_seed = _stable_sampling_seed(
+                base_seed=seed,
+                split_stem=sf.stem,
+                subject=subject,
+                p=float(p),
+                gen_model=gen_model,
+                stage="synth",
+            )
+            qc_seed = _stable_sampling_seed(
+                base_seed=seed,
+                split_stem=sf.stem,
+                subject=subject,
+                p=float(p),
+                gen_model=gen_model,
+                stage="qc",
+            )
             set_seed(synth_seed)
             synth = sample_by_class(
                 ckpt_path=ckpt_path,

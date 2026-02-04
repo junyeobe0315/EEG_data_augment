@@ -430,6 +430,20 @@ def train_classifier(
         }
     )
 
+    def _score_from_metrics(m: dict) -> float:
+        # Fall back gracefully to avoid "no ckpt saved" crashes due to a misconfigured key.
+        if best_ckpt_metric in m and np.isfinite(m.get(best_ckpt_metric, np.nan)):
+            return float(m[best_ckpt_metric])
+        for k in ("kappa", "bal_acc", "acc", "f1_macro", "loss"):
+            if k in m and np.isfinite(m.get(k, np.nan)):
+                return float(m[k])
+        return float("inf") if best_ckpt_direction == "min" else float("-inf")
+
+    def _is_better(cur: float, best: float) -> bool:
+        if best_ckpt_direction == "min":
+            return cur < best
+        return cur > best
+
     if is_sklearn_model(model_type):
         svm = build_svm_classifier(clf_cfg["model"])
         svm.fit(x_train, y_train)
@@ -455,6 +469,9 @@ def train_classifier(
                 "total_steps_target": 0,
                 "total_steps_done": 0,
                 "steps_per_eval": 0,
+                "best_ckpt_score": float(_score_from_metrics(val_metrics)),
+                "best_ckpt_step": None,
+                "best_ckpt_epoch": 1,
             }
         )
         with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
@@ -484,6 +501,11 @@ def train_classifier(
             "alpha_effective": alpha_effective,
             "total_steps_target": 0,
             "total_steps_done": 0,
+            "best_ckpt_metric": best_ckpt_metric,
+            "best_ckpt_direction": best_ckpt_direction,
+            "best_ckpt_score": float(_score_from_metrics(val_metrics)),
+            "best_ckpt_step": None,
+            "best_ckpt_epoch": 1,
         }
         with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=True, indent=2)
@@ -531,24 +553,11 @@ def train_classifier(
         )
     ce = torch.nn.CrossEntropyLoss()
 
-    def _best_ckpt_score(m: dict) -> float:
-        # Fall back gracefully to avoid "no ckpt saved" crashes due to a misconfigured key.
-        if best_ckpt_metric in m and np.isfinite(m.get(best_ckpt_metric, np.nan)):
-            return float(m[best_ckpt_metric])
-        for k in ("kappa", "bal_acc", "acc", "f1_macro", "loss"):
-            if k in m and np.isfinite(m.get(k, np.nan)):
-                return float(m[k])
-        return float("inf") if best_ckpt_direction == "min" else float("-inf")
-
-    def _is_better(cur: float, best: float) -> bool:
-        if best_ckpt_direction == "min":
-            return cur < best
-        return cur > best
-
     best_score = float("inf") if best_ckpt_direction == "min" else float("-inf")
     best_val_metrics = {"acc": 0.0, "kappa": 0.0, "f1_macro": 0.0}
     best_ckpt_step: int | None = None
     best_ckpt_epoch: int | None = None
+    last_val_metrics: dict | None = None
     total_steps_done = 0
     step_cfg = clf_cfg["train"].get("step_control", {})
     use_fixed_steps = bool(step_cfg.get("enabled", False)) and int(step_cfg.get("total_steps", 0)) > 0
@@ -584,6 +593,7 @@ def train_classifier(
                 total_steps_done += 1
 
             val_metrics = _evaluate_torch(model, va_dl, device, criterion=ce)
+            last_val_metrics = val_metrics
             if sched is not None:
                 sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
             append_jsonl(
@@ -596,7 +606,7 @@ def train_classifier(
                 },
             )
 
-            score = _best_ckpt_score(val_metrics)
+            score = _score_from_metrics(val_metrics)
             if _is_better(score, best_score):
                 best_score = score
                 best_val_metrics = val_metrics
@@ -634,11 +644,12 @@ def train_classifier(
                 total_steps_done += 1
 
             val_metrics = _evaluate_torch(model, va_dl, device, criterion=ce)
+            last_val_metrics = val_metrics
             if sched is not None:
                 sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
             append_jsonl(log_path, {"epoch": ep, "train_loss": float(np.mean(loss_meter)), **val_metrics})
 
-            score = _best_ckpt_score(val_metrics)
+            score = _score_from_metrics(val_metrics)
             if _is_better(score, best_score):
                 best_score = score
                 best_val_metrics = val_metrics
@@ -656,8 +667,26 @@ def train_classifier(
                     exp_dir / "ckpt.pt",
                 )
 
+    ckpt_path = exp_dir / "ckpt.pt"
+    if not ckpt_path.exists():
+        # Defensive fallback for extreme instability (e.g., all-NaN validation metrics).
+        torch.save(
+            {
+                "state_dict": model.state_dict(),
+                "normalizer": norm.state_dict(),
+                "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
+                "n_classes": int(np.max(y_train)) + 1,
+                "mode": mode,
+                "model_type": model_type,
+            },
+            ckpt_path,
+        )
+        if last_val_metrics is not None:
+            best_val_metrics = dict(last_val_metrics)
+            best_score = float(_score_from_metrics(best_val_metrics))
+
     # Evaluate best checkpoint on requested split.
-    ckpt = torch.load(exp_dir / "ckpt.pt", map_location=device, weights_only=False)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
     test_metrics = _evaluate_torch(model, te_dl, device) if te_dl is not None else {}
     train_meta.update(

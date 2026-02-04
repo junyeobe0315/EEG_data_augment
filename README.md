@@ -1,58 +1,76 @@
-# EEG Data Augmentation for Low-Data Cross-Session MI Decoding
+# EEG Data Augmentation for Cross-Session Low-Data MI (BCI IV-2a)
 
-Reproducible pipeline to test whether **generative augmentation** improves **cross-session generalization** on **BCI Competition IV-2a** under **low-data** constraints.
+Reproducible research pipeline for testing whether **generative EEG augmentation** improves **cross-session generalization** under **low-data** constraints.
 
-## Project Scope
-- Dataset: BCI Competition IV-2a (A01-A09), 4-class motor imagery.
-- Main task: train on session `T`, evaluate on session `E` (cross-session).
-- Main question: does synthetic EEG improve test performance when `T_train` is small?
-- Core outputs: per-subject metrics, aggregated tables/figures, and distance-vs-gain analysis.
+## 1) What This Project Answers
+- Dataset: BCI Competition IV-2a (`A01`-`A09`, 4-class MI)
+- Train domain: session `T`
+- Target domain: session `E`
+- Main question: does augmentation help when only a small fraction of `T_train` is available?
 
-## Experiment Tracks
+## 2) Main Tracks
+- `Main Protocol Track` (recommended for claims)
+  - leakage-safe split/normalization/training/evaluation flow
+  - validation-driven model selection (`T_val` only)
+  - final test is a separate step
+- `Paper-Faithful Track`
+  - paper/repo-style reproduction-oriented settings
+- `Official-Faithful Track`
+  - PyTorch implementations aligned to official code behavior for defense of implementation fidelity
 
-### 1) Main Protocol Track (recommended)
-- Strict leakage-safe workflow.
-- Uses saved split/subsample indices.
-- Uses `rho = N_synth / N_real` with derived `alpha_tilde = rho/(1+rho)`.
-- Default sweep is **validation-driven** (`evaluate_test=false`), then final test-only pass.
+See `PROTOCOL.md` and `PAPER_TRACK.md` for details.
 
-### 2) Paper-Faithful Track
-- Isolated track for paper-style reproduction.
-- Allows reference-style settings that may differ from main strict protocol.
-- See `PAPER_TRACK.md`.
+## 3) Models
+- Classifiers (main sweep):
+  - `eegnet_tf_faithful`
+  - `svm` (FBCSP + SVM)
+  - `eeg_conformer`
+  - `ctnet`
+- Generators:
+  - `eeggan_net`
+  - `cwgan_gp`
+  - `conditional_ddpm`
+  - `cvae`
+- Controls:
+  - `C0_no_aug`
+  - `C1_classical`
+  - `C2_hard_mix` (legacy hard-label mix baseline)
 
-### 3) Official-Faithful Track
-- PyTorch implementations aligned to official EEGNet/ATCNet settings.
-- Used as reproducibility-defense evidence.
+## 4) Reproducibility / Fairness Guarantees
+- Saved and reused split/subsample indices (`data/splits/*.json`)
+- Train-only fitting for normalization/FBCSP/generator/QC statistics
+- Classifier best checkpoint metric is configurable (default: `kappa`)
+- Generator checkpoint selected by deterministic `T_val` proxy (`ckpt_scores.json`)
+- Condition-stable seeds for classifier runs and stable seeds for synth/QC sampling
+- Fixed-step training option for deep classifiers to control step-count confound
+- Logged requested vs effective mixture:
+  - `ratio`, `alpha_tilde`
+  - `ratio_effective`, `alpha_effective`
 
-## Current Classifier Set
-- Main sweep models: `eegnet_tf_faithful`, `svm`(FBCSP+SVM), `eeg_conformer`, `ctnet`
-- Removed from main sweep: `atcnet_tf_faithful` (acceptance gap > threshold)
-
-## Repository Layout
+## 5) Repository Layout
 ```text
-configs/                 # YAML experiment controls
-data/                    # raw, processed, splits
-runs/                    # checkpoints, logs, sampled synthetic data
-results/                 # metrics, tables, figures
-src/                     # core modules
-scripts/                 # stage scripts + run wrappers
+configs/    # YAML configs
+scripts/    # entry scripts (00~05 + helpers)
+src/        # core modules
+runs/       # checkpoints/logs/synthetic artifacts (gitignored)
+results/    # metrics/tables/figures (gitignored)
+data/       # raw/processed/splits (gitignored)
 ```
 
-## Environment
+## 6) Environment Setup
 ```bash
 conda activate EEG
 pip install -r requirements.txt
 ```
 
-## Quick Start
+## 7) Minimal Command Flow
 
-### A) Main pipeline (00-05)
+### A. Main pipeline (00~05)
 ```bash
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 ```
 
-### B) Final test-only evaluation (after selecting configs on T_val)
+### B. Final test-only evaluation (after selecting configs on `T_val`)
 ```bash
 conda run -n EEG --no-capture-output python scripts/05b_final_test_eval.py \
   --input-csv results/metrics/clf_cross_session.csv \
@@ -62,52 +80,90 @@ conda run -n EEG --no-capture-output python scripts/05_eval_and_aggregate.py \
   --metrics-file clf_cross_session_test.csv
 ```
 
-### C) Pipeline smoke check
+### C. Sanity checks
 ```bash
-conda run -n EEG --no-capture-output python scripts/11_validate_pipeline.py --smoke
-```
+# Config/split integrity check
+conda run -n EEG --no-capture-output python scripts/11_validate_pipeline.py
 
-### D) One-shot small pilot (quick sanity run)
-```bash
+# Tiny smoke train
+conda run -n EEG --no-capture-output python scripts/11_validate_pipeline.py --smoke
+
+# One-shot quick pilot (gen + qc + baseline/genaug)
 conda run -n EEG --no-capture-output python scripts/12_run_small_pilot.py \
   --subject 1 --seed 0 --p 0.20 \
   --gen-model cvae --clf-model eegnet_tf_faithful \
   --ratio 0.5 --qc-on --gen-epochs 3 --clf-steps 200
 ```
 
-## Main Protocol Summary
-Detailed rules are in `PROTOCOL.md`.
+### D. Paper / Official-faithful tracks
+```bash
+CONDA_ENV=EEG ./scripts/run_paper_track.sh
+CONDA_ENV=EEG ./scripts/run_official_faithful.sh
+```
 
-- Split: `T -> train/val`, `E -> test`.
-- Low-data applies to `T_train` only (`r = 0.01, 0.05, 0.10, 0.20, 1.00`; `1.00` is full-data baseline).
-- Fit-only-on-train: normalization, FBCSP, generator, QC statistics.
-- Hyperparameter/model selection on `T_val` only.
-- `E_test` is final reporting only.
-- Deep classifiers use fixed-step control to remove the “more data => more optimizer steps” confound.
-- Classifier training uses condition-stable seeds, so partial reruns keep identical augmentation sampling behavior.
-- Generator checkpoint is selected with deterministic `T_val` proxy (`runs/gen/.../ckpt_scores.json`, `training_meta.json`). 
+## 8) Useful `.sh` Entry Scripts
+- `scripts/run_main_pipeline.sh`
+  - runs `00_prepare_data -> 01_make_splits -> 02_train_gen -> 03_sample_and_qc -> 04_train_clf -> 05_eval_and_aggregate`
+- `scripts/run_one.sh`
+  - alias to `run_main_pipeline.sh`
+- `scripts/run_paper_track.sh`
+  - paper track data prep + run
+- `scripts/run_official_faithful.sh`
+  - official-faithful acceptance run
 
-## Output Files (Main)
-- Per-run metrics: `results/metrics/clf_cross_session.csv`
+## 9) Core Outputs
+- Run-level metrics: `results/metrics/clf_cross_session.csv`
 - Final test metrics: `results/metrics/clf_cross_session_test.csv`
-- Aggregates: `results/tables/main_table_{acc|kappa|f1_macro}.csv`
-- Statistical tests: `results/tables/stats_summary.csv`
-- Distance-vs-gain: `results/tables/distance_gain_correlation.csv`
-- Figures: `results/figures/*.png`
+- Aggregated tables:
+  - `results/tables/main_table_acc.csv`
+  - `results/tables/main_table_kappa.csv`
+  - `results/tables/main_table_f1_macro.csv`
+  - `results/tables/stats_summary.csv`
+  - `results/tables/distance_gain_correlation.csv`
+- Figures:
+  - `results/figures/accuracy_vs_ratio.png`
+  - `results/figures/accuracy_vs_r.png`
+  - `results/figures/distance_vs_gain.png`
 
-## Notes
-- `C2_hard_mix` is currently a legacy hard-label mix baseline (explicitly not soft-label mixup).
-- `split.test_ratio` is ignored in `cross_session` mode (session `E` is full test set).
+## 10) Notes
+- In `cross_session`, `split.test_ratio` is intentionally ignored (`E` is full test set).
+- Main track default is `evaluate_test=false`; test is for final reporting only.
 
-## Korean Summary (요약)
-- 이 프로젝트는 BCI IV-2a에서 **교차세션 + 저데이터** 조건에서 생성 증강의 효과를 검증합니다.
-- 메인 트랙은 누수 방지 규칙을 강제하며, 검증셋으로만 선택하고 테스트셋은 최종 평가에만 사용합니다.
-- `run_main_pipeline.sh`로 00~05를 실행하고, 이후 `05b_final_test_eval.py`로 최종 테스트를 분리 수행합니다.
-- 재현성 근거(분할 인덱스, 시드, ckpt selection 로그, 통계 요약)를 결과 파일로 남깁니다.
+---
+
+## 한국어 요약
+
+### 프로젝트 목표
+- BCI IV-2a에서 `cross-session(T->E)` + `low-data` 조건에서
+- 생성모델 기반 증강이 일반화 성능을 올리는지
+- 누수 없이 재현 가능하게 검증합니다.
+
+### 핵심 원칙
+- split/subsample 인덱스 저장 및 재사용
+- 정규화/FBCSP/생성기/QC 통계는 train-only fit
+- 모델 선택은 `T_val`만 사용
+- `E_test`는 최종 평가 단계에서만 사용
+
+### 지금 바로 실행할 명령
+```bash
+CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
+
+conda run -n EEG --no-capture-output python scripts/05b_final_test_eval.py \
+  --input-csv results/metrics/clf_cross_session.csv \
+  --output-csv results/metrics/clf_cross_session_test.csv
+
+conda run -n EEG --no-capture-output python scripts/05_eval_and_aggregate.py \
+  --metrics-file clf_cross_session_test.csv
+```
+
+### 보조 실행 스크립트
+- `scripts/run_paper_track.sh`: 논문 재현용 트랙
+- `scripts/run_official_faithful.sh`: 공식 코드 정합성 점검 트랙
+- `scripts/run_one.sh`: 메인 파이프라인 실행
 
 ## References
-- EEG-ATCNet: https://github.com/Altaheri/EEG-ATCNet
 - EEG-Conformer: https://github.com/eeyhsong/EEG-Conformer
+- EEGNet reference: https://github.com/amrzhd/EEGNet
+- EEG-ATCNet: https://github.com/Altaheri/EEG-ATCNet
 - CTNet: https://github.com/snailpt/CTNet
-- EEGNet reference repo: https://github.com/amrzhd/EEGNet
-- BCI IV-2a results: https://www.bbci.de/competition/iv/results/#dataset2a
+- BCI IV results page: https://www.bbci.de/competition/iv/results/#dataset2a
