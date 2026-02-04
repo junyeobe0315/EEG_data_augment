@@ -46,6 +46,7 @@ def _stratified_subsample(ids: list[str], labels: list[int], frac: float, seed: 
 def main() -> None:
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     split_cfg = load_yaml(ROOT / "configs/split.yaml")
+    sweep_cfg = load_yaml(ROOT / "configs/sweep.yaml")
 
     if split_cfg["protocol"] != "cross_session":
         raise ValueError("This script is now fixed for cross_session protocol.")
@@ -53,6 +54,12 @@ def main() -> None:
     split_dir = ensure_dir(ROOT / "data/splits")
     index_df = load_processed_index(data_cfg["index_path"])
     low_data_fracs = [float(p) for p in split_cfg.get("low_data_fracs", [1.0])]
+    sweep_fracs = [float(p) for p in sweep_cfg.get("low_data_ratios", [])]
+    if sweep_fracs and set(low_data_fracs) != set(sweep_fracs):
+        print(
+            "[warn] split.low_data_fracs and sweep.low_data_ratios differ. "
+            "Using split.low_data_fracs for index generation."
+        )
 
     n_saved = 0
     for subject in sorted(index_df["subject"].unique().tolist()):

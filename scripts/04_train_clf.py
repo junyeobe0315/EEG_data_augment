@@ -33,7 +33,6 @@ def _build_clf_cfg(base_cfg: dict, clf_model: str, sweep_cfg: dict) -> dict:
         for key in ("epochs", "batch_size", "lr", "weight_decay", "num_workers", "device"):
             if key in pp:
                 cfg["train"][key] = pp[key]
-        # "논문 설정 그대로"를 우선한다.
         return cfg
 
     if not bool(sweep_cfg.get("apply_vram_presets", True)):
@@ -58,24 +57,61 @@ def _find_synth_npz(root: Path, gen_model: str, split_stem: str, qc_on: bool) ->
     return root / sub / legacy
 
 
-def _resolve_stage_lists(sweep_cfg: dict, clf_models: list[str], gen_models: list[str]) -> tuple[list[str], list[str], list[float], list[bool]]:
+def _resolve_stage_lists(
+    sweep_cfg: dict,
+    clf_models: list[str],
+    gen_models: list[str],
+    alpha_list: list[float],
+    qc_on: list[bool],
+) -> tuple[list[str], list[str], list[float], list[bool]]:
     stage = str(sweep_cfg.get("stage_mode", "full"))
-    ratios = [float(r) for r in sweep_cfg.get("synth_ratio_list", [0.0, 0.1, 0.3, 0.5])]
-    qc_on = [bool(v) for v in sweep_cfg.get("qc_on", [True, False])]
 
     if stage == "screening":
         clf_models = [normalize_classifier_type(str(sweep_cfg.get("screening_classifier", "eegnet")))]
         qc_on = [True]
-        return clf_models, gen_models, ratios, qc_on
+        return clf_models, gen_models, alpha_list, qc_on
 
     if stage == "full":
-        # optional reduced ratio list for stage2
-        full_ratios = sweep_cfg.get("full_stage_ratios")
-        if full_ratios is not None:
-            ratios = [float(r) for r in full_ratios]
-        return clf_models, gen_models, ratios, qc_on
+        full_alphas = sweep_cfg.get("full_stage_alphas")
+        if full_alphas is not None:
+            alpha_list = [float(a) for a in full_alphas]
+        return clf_models, gen_models, alpha_list, qc_on
 
     raise ValueError(f"Unknown stage_mode: {stage}")
+
+
+def _condition_name(mode: str, gen_model: str | None = None) -> str:
+    if mode == "none":
+        return "C0_no_aug"
+    if mode == "classical":
+        return "C1_classical"
+    if mode == "mixup":
+        return "C2_mixup"
+    if mode == "gen_aug":
+        return f"GenAug_{gen_model}" if gen_model else "GenAug"
+    return f"Other_{mode}"
+
+
+def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
+    seed = int(split.get("seed", -1))
+    p = float(split.get("low_data_frac", 1.0))
+    subject = split.get("subject", None)
+
+    allowed_seeds = set(int(s) for s in split_cfg.get("seeds", []))
+    allowed_p = [float(x) for x in split_cfg.get("low_data_fracs", [])]
+    allowed_subjects = set(int(s) for s in data_cfg.get("subjects", []))
+
+    if allowed_seeds and seed not in allowed_seeds:
+        return False
+    if allowed_p and not any(abs(p - ap) < 1e-12 for ap in allowed_p):
+        return False
+    if subject is not None and allowed_subjects:
+        try:
+            if int(subject) not in allowed_subjects:
+                return False
+        except Exception:
+            return False
+    return True
 
 
 def main() -> None:
@@ -91,7 +127,15 @@ def main() -> None:
 
     clf_models = [normalize_classifier_type(m) for m in sweep_cfg.get("clf_models", [default_clf])]
     gen_models = [normalize_generator_type(m) for m in sweep_cfg.get("gen_models", [default_gen])]
-    clf_models, gen_models, synth_ratio_list, qc_on_list = _resolve_stage_lists(sweep_cfg, clf_models, gen_models)
+    alpha_list = [float(a) for a in sweep_cfg.get("alpha_list", [0.0, 0.25, 0.5, 1.0, 2.0])]
+    qc_on_list = [bool(v) for v in sweep_cfg.get("qc_on", [True])]
+    clf_models, gen_models, alpha_list, qc_on_list = _resolve_stage_lists(
+        sweep_cfg,
+        clf_models,
+        gen_models,
+        alpha_list,
+        qc_on_list,
+    )
 
     index_df = load_processed_index(data_cfg["index_path"])
     metric_dir = ensure_dir(ROOT / "results/metrics")
@@ -103,16 +147,20 @@ def main() -> None:
     rows = []
     for sf in split_files:
         split = _load_split(sf)
+        if not _in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
+            continue
         seed = int(split["seed"])
         set_seed(seed)
-        subject = split.get("subject", "all")
+        subject = int(split.get("subject", -1))
         p = float(split.get("low_data_frac", 1.0))
 
         for clf_model in clf_models:
             clf_run_cfg = _build_clf_cfg(clf_cfg, clf_model=clf_model, sweep_cfg=sweep_cfg)
+            modes = [str(m) for m in clf_run_cfg.get("augmentation", {}).get("modes", ["none"])]
 
-            for mode in clf_run_cfg["augmentation"]["modes"]:
-                if mode != "gen_aug":
+            for mode in modes:
+                if mode == "none":
+                    alpha = 0.0
                     exp_id = make_exp_id(
                         "clf",
                         split=sf.stem,
@@ -120,107 +168,163 @@ def main() -> None:
                         p=p,
                         clf=clf_model,
                         mode=mode,
+                        alpha=alpha,
                         ratio=0.0,
                         qc=False,
                     )
                     out_dir = ROOT / "runs/clf" / exp_id
-                    m = train_classifier(split, index_df, clf_run_cfg, pp_cfg, out_dir, mode=mode, synth_ratio=0.0)
+                    m = train_classifier(
+                        split,
+                        index_df,
+                        clf_run_cfg,
+                        pp_cfg,
+                        out_dir,
+                        mode=mode,
+                        synth_ratio=0.0,
+                        aug_strength=alpha,
+                    )
                     rows.append(
                         {
                             "split": sf.stem,
+                            "split_file": str(sf),
                             "subject": subject,
                             "p": p,
                             "seed": seed,
                             "protocol": split.get("protocol", split_cfg["protocol"]),
                             "clf_model": clf_model,
                             "gen_model": "none",
+                            "condition": _condition_name(mode=mode),
                             "mode": mode,
+                            "aug_strength": alpha,
                             "synth_ratio": 0.0,
                             "qc_on": False,
+                            "run_dir": str(out_dir),
+                            "aug_npz": str(out_dir / "aug_used.npz"),
+                            "synth_npz": "",
                             **m,
                         }
                     )
                     continue
 
-                for ratio in synth_ratio_list:
-                    ratio = float(ratio)
-                    if ratio <= 0.0:
+                if mode in {"classical", "mixup", "paper_sr"}:
+                    for alpha in alpha_list:
+                        alpha = float(alpha)
+                        if alpha <= 0:
+                            continue
+
                         exp_id = make_exp_id(
                             "clf",
                             split=sf.stem,
                             subject=subject,
                             p=p,
                             clf=clf_model,
-                            gen="none",
                             mode=mode,
+                            alpha=alpha,
                             ratio=0.0,
                             qc=False,
                         )
                         out_dir = ROOT / "runs/clf" / exp_id
-                        m = train_classifier(split, index_df, clf_run_cfg, pp_cfg, out_dir, mode=mode, synth_ratio=0.0)
+                        m = train_classifier(
+                            split,
+                            index_df,
+                            clf_run_cfg,
+                            pp_cfg,
+                            out_dir,
+                            mode=mode,
+                            synth_ratio=0.0,
+                            aug_strength=alpha,
+                        )
                         rows.append(
                             {
                                 "split": sf.stem,
+                                "split_file": str(sf),
                                 "subject": subject,
                                 "p": p,
                                 "seed": seed,
                                 "protocol": split.get("protocol", split_cfg["protocol"]),
                                 "clf_model": clf_model,
                                 "gen_model": "none",
+                                "condition": _condition_name(mode=mode),
                                 "mode": mode,
+                                "aug_strength": alpha,
                                 "synth_ratio": 0.0,
                                 "qc_on": False,
+                                "run_dir": str(out_dir),
+                                "aug_npz": str(out_dir / "aug_used.npz"),
+                                "synth_npz": "",
                                 **m,
                             }
                         )
-                        continue
+                    continue
 
-                    for gen_model in gen_models:
-                        for qc_on in qc_on_list:
-                            synth_npz = _find_synth_npz(ROOT, gen_model=gen_model, split_stem=sf.stem, qc_on=bool(qc_on))
-                            if not synth_npz.exists():
-                                print(
-                                    f"Skip {sf.stem} clf={clf_model} gen={gen_model} ratio={ratio} qc={qc_on}: {synth_npz} missing"
+                if mode == "gen_aug":
+                    for alpha in alpha_list:
+                        alpha = float(alpha)
+                        if alpha <= 0:
+                            continue
+
+                        for gen_model in gen_models:
+                            for qc_on in qc_on_list:
+                                synth_npz = _find_synth_npz(
+                                    ROOT,
+                                    gen_model=gen_model,
+                                    split_stem=sf.stem,
+                                    qc_on=bool(qc_on),
                                 )
-                                continue
+                                if not synth_npz.exists():
+                                    print(
+                                        f"Skip {sf.stem} clf={clf_model} gen={gen_model} alpha={alpha} qc={qc_on}: {synth_npz} missing"
+                                    )
+                                    continue
 
-                            exp_id = make_exp_id(
-                                "clf",
-                                split=sf.stem,
-                                subject=subject,
-                                p=p,
-                                clf=clf_model,
-                                gen=gen_model,
-                                mode=mode,
-                                ratio=ratio,
-                                qc=qc_on,
-                            )
-                            out_dir = ROOT / "runs/clf" / exp_id
-                            m = train_classifier(
-                                split,
-                                index_df,
-                                clf_run_cfg,
-                                pp_cfg,
-                                out_dir,
-                                mode=mode,
-                                synth_ratio=ratio,
-                                synth_npz=str(synth_npz),
-                            )
-                            rows.append(
-                                {
-                                    "split": sf.stem,
-                                    "subject": subject,
-                                    "p": p,
-                                    "seed": seed,
-                                    "protocol": split.get("protocol", split_cfg["protocol"]),
-                                    "clf_model": clf_model,
-                                    "gen_model": gen_model,
-                                    "mode": mode,
-                                    "synth_ratio": ratio,
-                                    "qc_on": bool(qc_on),
-                                    **m,
-                                }
-                            )
+                                exp_id = make_exp_id(
+                                    "clf",
+                                    split=sf.stem,
+                                    subject=subject,
+                                    p=p,
+                                    clf=clf_model,
+                                    gen=gen_model,
+                                    mode=mode,
+                                    alpha=alpha,
+                                    ratio=alpha,
+                                    qc=bool(qc_on),
+                                )
+                                out_dir = ROOT / "runs/clf" / exp_id
+                                m = train_classifier(
+                                    split,
+                                    index_df,
+                                    clf_run_cfg,
+                                    pp_cfg,
+                                    out_dir,
+                                    mode=mode,
+                                    synth_ratio=alpha,
+                                    synth_npz=str(synth_npz),
+                                    aug_strength=alpha,
+                                )
+                                rows.append(
+                                    {
+                                        "split": sf.stem,
+                                        "split_file": str(sf),
+                                        "subject": subject,
+                                        "p": p,
+                                        "seed": seed,
+                                        "protocol": split.get("protocol", split_cfg["protocol"]),
+                                        "clf_model": clf_model,
+                                        "gen_model": gen_model,
+                                        "condition": _condition_name(mode=mode, gen_model=gen_model),
+                                        "mode": mode,
+                                        "aug_strength": alpha,
+                                        "synth_ratio": alpha,
+                                        "qc_on": bool(qc_on),
+                                        "run_dir": str(out_dir),
+                                        "aug_npz": str(out_dir / "aug_used.npz"),
+                                        "synth_npz": str(synth_npz),
+                                        **m,
+                                    }
+                                )
+                    continue
+
+                print(f"[warn] unsupported augmentation mode: {mode}")
 
     if rows:
         out_csv = metric_dir / f"clf_{split_cfg['protocol']}.csv"

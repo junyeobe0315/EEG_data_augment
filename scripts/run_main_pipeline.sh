@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
+export JOBLIB_TEMP_FOLDER="${JOBLIB_TEMP_FOLDER:-/tmp}"
 
 # Optional: CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 if [[ -n "${CONDA_ENV:-}" ]]; then

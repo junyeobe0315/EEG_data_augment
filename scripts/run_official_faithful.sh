@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
+export JOBLIB_TEMP_FOLDER="${JOBLIB_TEMP_FOLDER:-/tmp}"
 
 # Usage examples:
 #   ./scripts/run_official_faithful.sh

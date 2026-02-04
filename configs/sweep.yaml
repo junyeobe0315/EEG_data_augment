@@ -1,16 +1,29 @@
-synth_ratio_list:
-- 0.0
-qc_on:
-- true
-gen_models:
-- cvae
-clf_models:
-- eegnet_tf_faithful
-- svm
-- eeg_conformer
-- ctnet
+low_data_ratios: [0.01, 0.05, 0.10, 0.20]
+alpha_list: [0.0, 0.25, 0.5, 1.0, 2.0]
+qc_on: [true]
+gen_models: [eeggan_net, cwgan_gp, conditional_ddpm, cvae]
+clf_models: [eegnet_tf_faithful, svm, eeg_conformer, ctnet]
 vram_profile: 6gb
 apply_vram_presets: true
 use_paper_presets: false
+
+# Optional staged execution:
+# - screening: run only screening_classifier with full alpha sweep.
+# - full: run all classifiers.
 stage_mode: full
 screening_classifier: eegnet_tf_faithful
+
+# Optional reduced alpha list when stage_mode=full after screening.
+# Set to null to use full alpha_list.
+full_stage_alphas: null
+
+analysis:
+  embedding:
+    method: eegnet_frozen
+    baseline_model: eegnet_tf_faithful
+  distance:
+    metric_primary: sliced_wasserstein
+    n_projections: 64
+    mmd_gamma: median_heuristic
+  plots:
+    alpha_ref_for_r_curve: 1.0

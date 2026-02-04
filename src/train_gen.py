@@ -365,7 +365,10 @@ def train_generative_model(
 ) -> Path:
     x_train, y_train = load_samples_by_ids(index_df, split["train_ids"])
 
-    norm = ZScoreNormalizer(eps=float(preprocess_cfg["normalization"].get("eps", 1e-6))).fit(x_train)
+    norm = ZScoreNormalizer(
+        eps=float(preprocess_cfg["normalization"].get("eps", 1e-6)),
+        mode=str(preprocess_cfg["normalization"].get("mode", "channel_global")),
+    ).fit(x_train)
     x_train = norm.transform(x_train)
 
     device = _resolve_device(gen_cfg)

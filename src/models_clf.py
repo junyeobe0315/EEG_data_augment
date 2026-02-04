@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 
 import numpy as np
 import torch
+
+os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba_cache")
 from mne.decoding import CSP
 from scipy.signal import butter, sosfiltfilt
 from sklearn.pipeline import Pipeline

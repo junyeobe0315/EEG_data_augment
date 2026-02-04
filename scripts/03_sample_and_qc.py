@@ -41,6 +41,28 @@ def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
     return cfg
 
 
+def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
+    seed = int(split.get("seed", -1))
+    p = float(split.get("low_data_frac", 1.0))
+    subject = split.get("subject", None)
+
+    allowed_seeds = set(int(s) for s in split_cfg.get("seeds", []))
+    allowed_p = [float(x) for x in split_cfg.get("low_data_fracs", [])]
+    allowed_subjects = set(int(s) for s in data_cfg.get("subjects", []))
+
+    if allowed_seeds and seed not in allowed_seeds:
+        return False
+    if allowed_p and not any(abs(p - ap) < 1e-12 for ap in allowed_p):
+        return False
+    if subject is not None and allowed_subjects:
+        try:
+            if int(subject) not in allowed_subjects:
+                return False
+        except Exception:
+            return False
+    return True
+
+
 def main() -> None:
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
@@ -66,6 +88,8 @@ def main() -> None:
 
         for sf in split_files:
             split = _load_split(sf)
+            if not _in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
+                continue
             seed = int(split["seed"])
             subject = split.get("subject", "all")
             p = split.get("low_data_frac", 1.0)
@@ -93,8 +117,14 @@ def main() -> None:
             synth_path = synth_dir / f"synth_{gen_model}_{sf.stem}.npz"
             save_synth_npz(synth_path, synth)
 
-            x_real_train, _ = load_samples_by_ids(index_df, split["train_ids"])
-            kept, report = run_qc(real_x=x_real_train, synth=synth, sfreq=int(data_cfg["sfreq"]), cfg=qc_cfg)
+            x_real_train, y_real_train = load_samples_by_ids(index_df, split["train_ids"])
+            kept, report = run_qc(
+                real_x=x_real_train,
+                synth=synth,
+                sfreq=int(data_cfg["sfreq"]),
+                cfg=qc_cfg,
+                real_y=y_real_train,
+            )
             kept_path = qc_dir / f"synth_qc_{gen_model}_{sf.stem}.npz"
             save_synth_npz(kept_path, kept)
 

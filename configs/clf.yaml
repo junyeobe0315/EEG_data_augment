@@ -192,10 +192,11 @@ paper_presets:
     lr: 0.001
     weight_decay: 0.0
 augmentation:
-  modes: [none, classical, mixup, paper_sr, gen_aug]
+  modes: [none, classical, mixup, gen_aug]
   classical:
     noise_std: 0.01
     max_time_shift: 20
+    channel_dropout_prob: 0.1
   mixup:
     alpha: 0.2
   paper_sr:

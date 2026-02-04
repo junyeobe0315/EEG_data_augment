@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any, Dict
@@ -22,10 +23,14 @@ def ensure_dir(path: str | Path) -> Path:
 
 
 def set_seed(seed: int) -> None:
+    os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    if torch.backends.cudnn.is_available():
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def make_exp_id(prefix: str, **kwargs: Any) -> str:

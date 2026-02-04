@@ -11,6 +11,7 @@ The repository contains:
 1. A full experiment pipeline (`00` to `05`) for preprocessing, splitting, generator training, classifier training, evaluation, and aggregation.
 2. A paper-comparison track (`08`, `09`) for no-augmentation reference checks.
 3. An official-faithful PyTorch track (`10`) that mirrors official EEGNet/ATCNet TensorFlow settings for reproducibility defense.
+4. A protocol document with leakage rules and low-data definition: `PROTOCOL.md`.
 
 ### 2) Current Model Decision (Before Main Experiments)
 Acceptance rule: **mean accuracy gap vs paper must be <= 2.0%p**.
@@ -57,7 +58,7 @@ results/
   metrics/ tables/ figures/   # per-run + aggregated outputs
 src/
   dataio.py split.py preprocess.py
-  models_gen.py models_clf.py models_official_faithful.py
+  models_gen.py models_clf.py models_official_faithful.py distribution.py
   train_gen.py sample_gen.py train_clf.py train_official_faithful.py
   eval.py aggregate.py utils.py
 scripts/
@@ -70,6 +71,7 @@ scripts/
   08_prepare_paper_track_data.py
   09_run_paper_track.py
   10_run_official_faithful_track.py
+  11_validate_pipeline.py
   run_main_pipeline.sh
   run_paper_track.sh
   run_official_faithful.sh
@@ -80,7 +82,7 @@ scripts/
 Tested with:
 1. Python 3.11
 2. PyTorch 2.10 (CUDA-enabled)
-3. MNE, NumPy, SciPy, scikit-learn, pandas
+3. MNE, NumPy, SciPy, scikit-learn, pandas, matplotlib
 
 Example:
 ```bash
@@ -112,6 +114,11 @@ python scripts/02_train_gen.py
 python scripts/03_sample_and_qc.py
 python scripts/04_train_clf.py
 python scripts/05_eval_and_aggregate.py
+```
+
+Pipeline integrity check (recommended before long runs):
+```bash
+python scripts/11_validate_pipeline.py --smoke
 ```
 
 ### 8) Reproducibility Rules Implemented

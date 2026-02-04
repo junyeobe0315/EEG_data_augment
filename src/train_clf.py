@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -21,39 +22,41 @@ from src.preprocess import ZScoreNormalizer
 from src.utils import append_jsonl, ensure_dir
 
 
-def _classical_augment_torch(x: torch.Tensor, noise_std: float, max_shift: int) -> torch.Tensor:
-    x = x + torch.randn_like(x) * noise_std
+def _classical_augment_numpy(
+    x: np.ndarray,
+    noise_std: float,
+    max_shift: int,
+    channel_dropout_prob: float,
+) -> np.ndarray:
+    out = x.copy().astype(np.float32)
+
+    if noise_std > 0:
+        out += np.random.randn(*out.shape).astype(np.float32) * float(noise_std)
+
     if max_shift > 0:
-        shift = int(torch.randint(-max_shift, max_shift + 1, (1,)).item())
-        x = torch.roll(x, shifts=shift, dims=-1)
-    return x
+        shifts = np.random.randint(-max_shift, max_shift + 1, size=out.shape[0])
+        for i, s in enumerate(shifts):
+            out[i] = np.roll(out[i], shift=int(s), axis=-1)
 
+    if channel_dropout_prob > 0:
+        drop_mask = np.random.rand(out.shape[0], out.shape[1]) < channel_dropout_prob
+        out[drop_mask, :] = 0.0
 
-def _classical_augment_numpy(x: np.ndarray, noise_std: float, max_shift: int) -> np.ndarray:
-    noise = np.random.randn(*x.shape).astype(np.float32) * noise_std
-    out = x + noise
-    if max_shift <= 0:
-        return out
-    shifts = np.random.randint(-max_shift, max_shift + 1, size=x.shape[0])
-    for i, s in enumerate(shifts):
-        out[i] = np.roll(out[i], shift=int(s), axis=-1)
     return out
 
 
-def _mixup_torch(x: torch.Tensor, y: torch.Tensor, alpha: float):
-    lam = np.random.beta(alpha, alpha)
-    idx = torch.randperm(x.shape[0], device=x.device)
-    xm = lam * x + (1 - lam) * x[idx]
-    ya, yb = y, y[idx]
-    return xm, ya, yb, lam
-
-
-def _mixup_numpy_hard(x: np.ndarray, y: np.ndarray, alpha: float) -> tuple[np.ndarray, np.ndarray]:
-    idx = np.random.permutation(x.shape[0])
-    lam = np.random.beta(alpha, alpha, size=x.shape[0]).astype(np.float32)
-    lm = lam[:, None, None]
-    xm = lm * x + (1.0 - lm) * x[idx]
-    ym = np.where(lam >= 0.5, y, y[idx])
+def _mixup_numpy_hard(
+    xa: np.ndarray,
+    ya: np.ndarray,
+    xb: np.ndarray,
+    yb: np.ndarray,
+    beta_alpha: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    beta_alpha = max(float(beta_alpha), 1e-3)
+    lam = np.random.beta(beta_alpha, beta_alpha, size=xa.shape[0]).astype(np.float32)
+    lam_x = lam[:, None, None]
+    xm = lam_x * xa + (1.0 - lam_x) * xb
+    ym = np.where(lam >= 0.5, ya, yb)
     return xm.astype(np.float32), ym.astype(np.int64)
 
 
@@ -61,20 +64,14 @@ def _seg_reconstruct_augment_numpy(
     x_pool: np.ndarray,
     y_pool: np.ndarray,
     n_classes: int,
-    batch_size: int,
-    n_aug: int,
+    n_per_class: int,
     n_segments: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Segmentation-and-reconstruction augmentation used in several BCI papers.
-    Build synthetic trials by concatenating temporal segments from same-class trials.
-    """
-    if n_aug <= 0 or n_segments <= 1:
+    if n_per_class <= 0 or n_segments <= 1:
         return np.empty((0, x_pool.shape[1], x_pool.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
 
     x_pool = x_pool.astype(np.float32)
     y_pool = y_pool.astype(np.int64)
-    n_per_class = max(1, int(batch_size // max(1, n_classes)) * int(n_aug))
     seg_points = np.linspace(0, x_pool.shape[-1], n_segments + 1, dtype=int)
 
     aug_x = []
@@ -101,6 +98,67 @@ def _seg_reconstruct_augment_numpy(
     y_aug = np.concatenate(aug_y, axis=0)
     perm = np.random.permutation(len(x_aug))
     return x_aug[perm], y_aug[perm]
+
+
+def _build_offline_augmented_bank(
+    mode: str,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    aug_strength: float,
+    clf_cfg: Dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    if aug_strength <= 0:
+        return np.empty((0, x_train.shape[1], x_train.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
+
+    n_add = int(round(len(x_train) * float(aug_strength)))
+    if n_add <= 0:
+        return np.empty((0, x_train.shape[1], x_train.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
+
+    if mode == "classical":
+        aug_cfg = clf_cfg["augmentation"].get("classical", {})
+        idx = np.random.choice(len(x_train), size=n_add, replace=True)
+        base_x = x_train[idx]
+        base_y = y_train[idx]
+        x_aug = _classical_augment_numpy(
+            base_x,
+            noise_std=float(aug_cfg.get("noise_std", 0.01)),
+            max_shift=int(aug_cfg.get("max_time_shift", 20)),
+            channel_dropout_prob=float(aug_cfg.get("channel_dropout_prob", 0.1)),
+        )
+        return x_aug, base_y.astype(np.int64)
+
+    if mode == "mixup":
+        mix_cfg = clf_cfg["augmentation"].get("mixup", {})
+        beta_alpha = float(mix_cfg.get("alpha", 0.2))
+        idx_a = np.random.choice(len(x_train), size=n_add, replace=True)
+        idx_b = np.random.choice(len(x_train), size=n_add, replace=True)
+        x_aug, y_aug = _mixup_numpy_hard(
+            x_train[idx_a],
+            y_train[idx_a],
+            x_train[idx_b],
+            y_train[idx_b],
+            beta_alpha=beta_alpha,
+        )
+        return x_aug, y_aug
+
+    if mode == "paper_sr":
+        sr_cfg = clf_cfg["augmentation"].get("paper_sr", {})
+        n_classes = int(np.max(y_train)) + 1
+        n_per_class = max(1, int(np.ceil((n_add / max(1, n_classes)))))
+        x_aug, y_aug = _seg_reconstruct_augment_numpy(
+            x_pool=x_train,
+            y_pool=y_train,
+            n_classes=n_classes,
+            n_per_class=n_per_class,
+            n_segments=int(sr_cfg.get("n_segments", 8)),
+        )
+        if len(x_aug) > n_add:
+            keep = np.random.choice(len(x_aug), size=n_add, replace=False)
+            x_aug = x_aug[keep]
+            y_aug = y_aug[keep]
+        return x_aug, y_aug
+
+    return np.empty((0, x_train.shape[1], x_train.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
 
 
 def _evaluate_torch(
@@ -144,8 +202,9 @@ def train_classifier(
     mode: str,
     synth_ratio: float = 0.0,
     synth_npz: Optional[str] = None,
+    aug_strength: float = 0.0,
 ) -> Dict[str, float]:
-    x_train, y_train = load_samples_by_ids(index_df, split["train_ids"])
+    x_train_real, y_train_real = load_samples_by_ids(index_df, split["train_ids"])
     x_val, y_val = load_samples_by_ids(index_df, split["val_ids"])
     x_test, y_test = load_samples_by_ids(index_df, split["test_ids"])
 
@@ -154,54 +213,49 @@ def train_classifier(
     norm = ZScoreNormalizer(
         eps=float(norm_cfg.get("eps", 1e-6)),
         mode=str(norm_cfg.get("mode", "channel_global")),
-    ).fit(x_train)
-    x_train = norm.transform(x_train)
+    ).fit(x_train_real)
+
+    x_train = norm.transform(x_train_real)
+    y_train = y_train_real.copy()
     x_val = norm.transform(x_val)
     x_test = norm.transform(x_test)
 
-    if mode == "gen_aug" and synth_ratio > 0 and synth_npz is not None:
-        synth = np.load(synth_npz)
-        sx = norm.transform(synth["X"].astype(np.float32))
-        sy = synth["y"].astype(np.int64)
-        n_add = int(len(x_train) * synth_ratio)
-        if n_add > 0 and len(sx) > 0:
-            idx = np.random.choice(len(sx), size=min(n_add, len(sx)), replace=False)
-            x_train = np.concatenate([x_train, sx[idx]], axis=0)
-            y_train = np.concatenate([y_train, sy[idx]], axis=0)
-
-    model_type = normalize_classifier_type(str(clf_cfg["model"].get("type", "eegnet")))
     exp_dir = ensure_dir(out_dir)
     log_path = exp_dir / "log.jsonl"
 
-    if is_sklearn_model(model_type):
-        # SVM uses offline variants for augmentation modes.
-        if mode == "classical":
-            x_aug = _classical_augment_numpy(
-                x_train,
-                noise_std=float(clf_cfg["augmentation"]["classical"].get("noise_std", 0.01)),
-                max_shift=int(clf_cfg["augmentation"]["classical"].get("max_time_shift", 20)),
-            )
-            x_train = np.concatenate([x_train, x_aug], axis=0)
-            y_train = np.concatenate([y_train, y_train], axis=0)
-        elif mode == "mixup":
-            alpha = float(clf_cfg["augmentation"]["mixup"].get("alpha", 0.2))
-            x_mix, y_mix = _mixup_numpy_hard(x_train, y_train, alpha=alpha)
-            x_train = np.concatenate([x_train, x_mix], axis=0)
-            y_train = np.concatenate([y_train, y_mix], axis=0)
-        elif mode == "paper_sr":
-            sr_cfg = clf_cfg["augmentation"].get("paper_sr", {})
-            x_aug, y_aug = _seg_reconstruct_augment_numpy(
-                x_pool=x_train,
-                y_pool=y_train,
-                n_classes=int(np.max(y_train)) + 1,
-                batch_size=int(clf_cfg["train"].get("batch_size", 64)),
-                n_aug=int(sr_cfg.get("n_aug", 1)),
-                n_segments=int(sr_cfg.get("n_segments", 8)),
-            )
-            if len(x_aug) > 0:
-                x_train = np.concatenate([x_train, x_aug], axis=0)
-                y_train = np.concatenate([y_train, y_aug], axis=0)
+    # Build augmented-only bank for analysis/logging and append to train set.
+    x_added_raw = np.empty((0, x_train_real.shape[1], x_train_real.shape[2]), dtype=np.float32)
+    y_added = np.empty((0,), dtype=np.int64)
 
+    if mode in {"classical", "mixup", "paper_sr"}:
+        x_added_raw, y_added = _build_offline_augmented_bank(
+            mode=mode,
+            x_train=x_train_real,
+            y_train=y_train,
+            aug_strength=float(aug_strength),
+            clf_cfg=clf_cfg,
+        )
+
+    elif mode == "gen_aug" and float(synth_ratio) > 0 and synth_npz is not None:
+        synth = np.load(synth_npz)
+        sx_raw = synth["X"].astype(np.float32)
+        sy = synth["y"].astype(np.int64)
+        n_add = int(round(len(x_train_real) * float(synth_ratio)))
+        if n_add > 0 and len(sx_raw) > 0:
+            replace = len(sx_raw) < n_add
+            idx = np.random.choice(len(sx_raw), size=n_add, replace=replace)
+            x_added_raw = sx_raw[idx]
+            y_added = sy[idx]
+
+    if len(x_added_raw) > 0:
+        x_added = norm.transform(x_added_raw)
+        x_train = np.concatenate([x_train, x_added], axis=0)
+        y_train = np.concatenate([y_train, y_added], axis=0)
+        np.savez_compressed(exp_dir / "aug_used.npz", X=x_added_raw, y=y_added)
+
+    model_type = normalize_classifier_type(str(clf_cfg["model"].get("type", "eegnet")))
+
+    if is_sklearn_model(model_type):
         svm = build_svm_classifier(clf_cfg["model"])
         svm.fit(x_train, y_train)
 
@@ -220,7 +274,19 @@ def train_classifier(
             },
             exp_dir / "ckpt.pkl",
         )
-        return test_metrics
+
+        out = {
+            **test_metrics,
+            "val_acc": float(val_metrics["acc"]),
+            "val_kappa": float(val_metrics["kappa"]),
+            "val_f1_macro": float(val_metrics["f1_macro"]),
+            "n_train_real": int(len(x_train_real)),
+            "n_train_aug": int(len(x_added_raw)),
+            "n_train_total": int(len(x_train)),
+        }
+        with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=True, indent=2)
+        return out
 
     dev = str(clf_cfg["train"].get("device", "auto"))
     if dev == "auto":
@@ -263,6 +329,7 @@ def train_classifier(
     ce = torch.nn.CrossEntropyLoss()
 
     best_val = -1.0
+    best_val_metrics = {"acc": 0.0, "kappa": 0.0, "f1_macro": 0.0}
 
     for ep in range(1, int(clf_cfg["train"].get("epochs", 80)) + 1):
         model.train()
@@ -270,39 +337,12 @@ def train_classifier(
 
         for xb, yb in tr_dl:
             xb, yb = xb.to(device), yb.to(device)
+            logits = model(xb)
+            loss = ce(logits, yb)
 
-            if mode == "classical":
-                xb = _classical_augment_torch(
-                    xb,
-                    noise_std=float(clf_cfg["augmentation"]["classical"].get("noise_std", 0.01)),
-                    max_shift=int(clf_cfg["augmentation"]["classical"].get("max_time_shift", 20)),
-                )
-
-            if mode == "mixup":
-                alpha = float(clf_cfg["augmentation"]["mixup"].get("alpha", 0.2))
-                xb_m, ya, yb_m, lam = _mixup_torch(xb, yb, alpha=alpha)
-                logits = model(xb_m)
-                loss = lam * ce(logits, ya) + (1 - lam) * ce(logits, yb_m)
-            elif mode == "paper_sr":
-                sr_cfg = clf_cfg["augmentation"].get("paper_sr", {})
-                x_aug_np, y_aug_np = _seg_reconstruct_augment_numpy(
-                    x_pool=x_train,
-                    y_pool=y_train,
-                    n_classes=int(np.max(y_train)) + 1,
-                    batch_size=int(clf_cfg["train"].get("batch_size", 64)),
-                    n_aug=int(sr_cfg.get("n_aug", 1)),
-                    n_segments=int(sr_cfg.get("n_segments", 8)),
-                )
-                if len(x_aug_np) > 0:
-                    x_aug = torch.from_numpy(x_aug_np).to(device)
-                    y_aug = torch.from_numpy(y_aug_np).to(device)
-                    xb = torch.cat([xb, x_aug], dim=0)
-                    yb = torch.cat([yb, y_aug], dim=0)
-                logits = model(xb)
-                loss = ce(logits, yb)
-            else:
-                logits = model(xb)
-                loss = ce(logits, yb)
+            # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
+            if hasattr(model, "regularization_loss"):
+                loss = loss + model.regularization_loss()
 
             opt.zero_grad()
             loss.backward()
@@ -316,11 +356,12 @@ def train_classifier(
 
         if val_metrics["acc"] > best_val:
             best_val = val_metrics["acc"]
+            best_val_metrics = val_metrics
             torch.save(
                 {
                     "state_dict": model.state_dict(),
                     "normalizer": norm.state_dict(),
-                    "shape": {"c": x_train.shape[1], "t": x_train.shape[2]},
+                    "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
                     "n_classes": int(np.max(y_train)) + 1,
                     "mode": mode,
                     "model_type": model_type,
@@ -332,4 +373,16 @@ def train_classifier(
     ckpt = torch.load(exp_dir / "ckpt.pt", map_location=device, weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
     test_metrics = _evaluate_torch(model, te_dl, device)
-    return test_metrics
+
+    out = {
+        **test_metrics,
+        "val_acc": float(best_val_metrics.get("acc", 0.0)),
+        "val_kappa": float(best_val_metrics.get("kappa", 0.0)),
+        "val_f1_macro": float(best_val_metrics.get("f1_macro", 0.0)),
+        "n_train_real": int(len(x_train_real)),
+        "n_train_aug": int(len(x_added_raw)),
+        "n_train_total": int(len(x_train)),
+    }
+    with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=True, indent=2)
+    return out

@@ -60,3 +60,8 @@ CONDA_ENV=EEG ./scripts/run_official_faithful.sh
   - `results/tables/paper_track_seed{seed}_summary.csv`
 - Paper reference comparison:
   - `results/tables/paper_track_seed{seed}_compare.csv`
+
+## Note on Validation Behavior
+- This track intentionally follows each paper/repo style, not the main strict protocol.
+- For models configured with `val_ratio=0` in `configs/paper_track.yaml` (e.g., some Conformer-style settings), `scripts/09_run_paper_track.py` uses `val=test` to emulate reference behavior.
+- Use this only for paper-faithful comparison, not for the main leakage-safe experiment.
