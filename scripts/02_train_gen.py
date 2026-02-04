@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -64,6 +65,27 @@ def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
     return True
 
 
+def _stable_gen_seed(
+    base_seed: int,
+    split_stem: str,
+    subject: int | str,
+    p: float,
+    gen_model: str,
+) -> int:
+    payload = json.dumps(
+        {
+            "split": str(split_stem),
+            "subject": str(subject),
+            "p": float(p),
+            "gen_model": str(gen_model),
+        },
+        sort_keys=True,
+        ensure_ascii=True,
+    )
+    digest = int(hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8], 16)
+    return int((int(base_seed) + digest) % (2**32 - 1))
+
+
 def main() -> None:
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
@@ -93,16 +115,23 @@ def main() -> None:
             split = _load_split(sf)
             if not _in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
                 continue
-            seed = int(split["seed"])
-            set_seed(seed)
+            seed_base = int(split["seed"])
 
             subject = split.get("subject", "all")
             p = split.get("low_data_frac", 1.0)
+            seed_run = _stable_gen_seed(
+                base_seed=seed_base,
+                split_stem=sf.stem,
+                subject=subject,
+                p=float(p),
+                gen_model=gen_model,
+            )
+            set_seed(seed_run)
             exp_id = make_exp_id(
                 "gen",
                 protocol=split.get("protocol", split_cfg["protocol"]),
                 subject=subject,
-                seed=seed,
+                seed=seed_base,
                 p=p,
                 split=sf.stem,
                 gmodel=gen_model,
@@ -117,9 +146,9 @@ def main() -> None:
                 out_dir=out_dir,
                 qc_cfg=qc_cfg,
                 clf_cfg=clf_cfg,
-                base_seed=seed,
+                base_seed=seed_run,
             )
-            print(f"[done] {exp_id} bs={run_cfg['train']['batch_size']}")
+            print(f"[done] {exp_id} bs={run_cfg['train']['batch_size']} run_seed={seed_run}")
 
 
 if __name__ == "__main__":

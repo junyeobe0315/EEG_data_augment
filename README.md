@@ -67,6 +67,14 @@ conda run -n EEG --no-capture-output python scripts/05_eval_and_aggregate.py \
 conda run -n EEG --no-capture-output python scripts/11_validate_pipeline.py --smoke
 ```
 
+### D) One-shot small pilot (quick sanity run)
+```bash
+conda run -n EEG --no-capture-output python scripts/12_run_small_pilot.py \
+  --subject 1 --seed 0 --p 0.20 \
+  --gen-model cvae --clf-model eegnet_tf_faithful \
+  --ratio 0.5 --qc-on --gen-epochs 3 --clf-steps 200
+```
+
 ## Main Protocol Summary
 Detailed rules are in `PROTOCOL.md`.
 

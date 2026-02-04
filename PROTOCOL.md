@@ -73,6 +73,9 @@ Artifacts:
 - Classifier runs use condition-stable seeds (`seed + hash(split, model, mode, ratio, generator, qc)`), so partial reruns do not change random augmentation behavior.
 - Sampling/QC deterministic seeds are logged (`synth_seed`, `qc_seed`).
 - Synthetic metadata includes generator ckpt path/hash and sampling params.
+- Classifier metrics/meta include both requested and effective mixing:
+  - `ratio` / `alpha_tilde` (requested)
+  - `ratio_effective` / `alpha_effective` (actual from used sample counts)
 
 ## 8) Step-Matching Control
 To prevent confound from different optimizer-update counts:

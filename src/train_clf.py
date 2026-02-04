@@ -161,6 +161,141 @@ def _build_offline_augmented_bank(
     return np.empty((0, x_train.shape[1], x_train.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
 
 
+def _proportional_allocation(counts: np.ndarray, total: int) -> np.ndarray:
+    counts = counts.astype(np.float64)
+    out = np.zeros_like(counts, dtype=np.int64)
+    if total <= 0 or float(counts.sum()) <= 0:
+        return out
+    raw = counts / counts.sum() * float(total)
+    base = np.floor(raw).astype(np.int64)
+    remain = int(total - int(base.sum()))
+    if remain > 0:
+        frac = raw - base
+        order = np.argsort(-frac)
+        base[order[:remain]] += 1
+    return base.astype(np.int64)
+
+
+def _sample_gen_aug_class_conditional(
+    sx_raw: np.ndarray,
+    sy: np.ndarray,
+    y_real: np.ndarray,
+    ratio: float,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    n_real = int(len(y_real))
+    n_add = int(round(float(n_real) * float(ratio)))
+    if n_add <= 0 or len(sx_raw) == 0:
+        return (
+            np.empty((0, sx_raw.shape[1], sx_raw.shape[2]), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            {
+                "aug_sampling_strategy": "gen_aug_class_conditional",
+                "n_add_requested": int(max(0, n_add)),
+                "n_add_actual": 0,
+                "class_counts_target": {},
+                "class_counts_actual": {},
+                "synth_pool_class_counts": {},
+                "missing_classes_in_synth_pool": [],
+                "replacement_used_classes": [],
+                "global_replace_used": False,
+            },
+        )
+
+    y_real = y_real.astype(np.int64)
+    sy = sy.astype(np.int64)
+    n_classes = int(max(np.max(y_real), np.max(sy))) + 1
+
+    real_counts = np.bincount(y_real, minlength=n_classes)
+    target_counts = _proportional_allocation(real_counts, n_add)
+    pool_counts = np.bincount(sy, minlength=n_classes)
+
+    missing = [int(c) for c in range(n_classes) if target_counts[c] > 0 and pool_counts[c] <= 0]
+    avail = [int(c) for c in range(n_classes) if pool_counts[c] > 0]
+
+    # Reallocate missing-class quota to available classes to keep total n_add stable.
+    if missing and avail:
+        leftover = int(sum(int(target_counts[c]) for c in missing))
+        for c in missing:
+            target_counts[c] = 0
+        avail_weights = real_counts[avail].astype(np.float64)
+        if float(avail_weights.sum()) <= 0:
+            avail_weights = np.ones(len(avail), dtype=np.float64)
+        alloc = _proportional_allocation(avail_weights, leftover)
+        for i, c in enumerate(avail):
+            target_counts[c] += int(alloc[i])
+
+    if int(target_counts.sum()) <= 0:
+        return (
+            np.empty((0, sx_raw.shape[1], sx_raw.shape[2]), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            {
+                "aug_sampling_strategy": "gen_aug_class_conditional",
+                "n_add_requested": int(n_add),
+                "n_add_actual": 0,
+                "class_counts_target": {str(c): int(target_counts[c]) for c in range(n_classes)},
+                "class_counts_actual": {},
+                "synth_pool_class_counts": {str(c): int(pool_counts[c]) for c in range(n_classes)},
+                "missing_classes_in_synth_pool": missing,
+                "replacement_used_classes": [],
+                "global_replace_used": False,
+            },
+        )
+
+    xs = []
+    ys = []
+    replacement_used = []
+    for c in range(n_classes):
+        k = int(target_counts[c])
+        if k <= 0:
+            continue
+        pool_idx = np.where(sy == c)[0]
+        if len(pool_idx) <= 0:
+            continue
+        use_replace = len(pool_idx) < k
+        pick = np.random.choice(pool_idx, size=k, replace=use_replace)
+        xs.append(sx_raw[pick].astype(np.float32))
+        ys.append(np.full((k,), c, dtype=np.int64))
+        if use_replace:
+            replacement_used.append(int(c))
+
+    if not xs:
+        return (
+            np.empty((0, sx_raw.shape[1], sx_raw.shape[2]), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            {
+                "aug_sampling_strategy": "gen_aug_class_conditional",
+                "n_add_requested": int(n_add),
+                "n_add_actual": 0,
+                "class_counts_target": {str(c): int(target_counts[c]) for c in range(n_classes)},
+                "class_counts_actual": {},
+                "synth_pool_class_counts": {str(c): int(pool_counts[c]) for c in range(n_classes)},
+                "missing_classes_in_synth_pool": missing,
+                "replacement_used_classes": [],
+                "global_replace_used": False,
+            },
+        )
+
+    x_aug = np.concatenate(xs, axis=0)
+    y_aug = np.concatenate(ys, axis=0)
+    perm = np.random.permutation(len(y_aug))
+    x_aug = x_aug[perm]
+    y_aug = y_aug[perm]
+    actual_counts = np.bincount(y_aug, minlength=n_classes)
+
+    meta = {
+        "aug_sampling_strategy": "gen_aug_class_conditional",
+        "n_add_requested": int(n_add),
+        "n_add_actual": int(len(y_aug)),
+        "class_counts_target": {str(c): int(target_counts[c]) for c in range(n_classes)},
+        "class_counts_actual": {str(c): int(actual_counts[c]) for c in range(n_classes)},
+        "synth_pool_class_counts": {str(c): int(pool_counts[c]) for c in range(n_classes)},
+        "missing_classes_in_synth_pool": missing,
+        "replacement_used_classes": replacement_used,
+        "global_replace_used": bool(len(replacement_used) > 0),
+    }
+    return x_aug, y_aug, meta
+
+
 def _evaluate_torch(
     model: torch.nn.Module,
     dl: DataLoader,
@@ -240,6 +375,11 @@ def train_classifier(
     # Build augmented-only bank for analysis/logging and append to train set.
     x_added_raw = np.empty((0, x_train_real.shape[1], x_train_real.shape[2]), dtype=np.float32)
     y_added = np.empty((0,), dtype=np.int64)
+    aug_sampling_meta = {
+        "aug_sampling_strategy": "none",
+        "n_add_requested": 0,
+        "n_add_actual": 0,
+    }
 
     if mode in {"classical", "mixup", "paper_sr"}:
         x_added_raw, y_added = _build_offline_augmented_bank(
@@ -254,12 +394,12 @@ def train_classifier(
         synth = np.load(synth_npz)
         sx_raw = synth["X"].astype(np.float32)
         sy = synth["y"].astype(np.int64)
-        n_add = int(round(len(x_train_real) * ratio))
-        if n_add > 0 and len(sx_raw) > 0:
-            replace = len(sx_raw) < n_add
-            idx = np.random.choice(len(sx_raw), size=n_add, replace=replace)
-            x_added_raw = sx_raw[idx]
-            y_added = sy[idx]
+        x_added_raw, y_added, aug_sampling_meta = _sample_gen_aug_class_conditional(
+            sx_raw=sx_raw,
+            sy=sy,
+            y_real=y_train_real,
+            ratio=ratio,
+        )
 
     if len(x_added_raw) > 0:
         x_added = norm.transform(x_added_raw)
@@ -269,17 +409,25 @@ def train_classifier(
 
     model_type = normalize_classifier_type(str(clf_cfg["model"].get("type", "eegnet")))
     alpha_tilde = float(ratio / (1.0 + ratio))
+    n_train_real = int(len(x_train_real))
+    n_train_aug = int(len(x_added_raw))
+    n_train_total = int(len(x_train))
+    ratio_effective = float(n_train_aug / max(1, n_train_real))
+    alpha_effective = float(n_train_aug / max(1, n_train_real + n_train_aug))
     train_meta = {
         "mode": mode,
         "model_type": model_type,
         "ratio": float(ratio),
         "alpha_tilde": alpha_tilde,
+        "ratio_effective": ratio_effective,
+        "alpha_effective": alpha_effective,
         "evaluate_test": bool(evaluate_test),
-        "n_train_real": int(len(x_train_real)),
-        "n_train_aug": int(len(x_added_raw)),
-        "n_train_total": int(len(x_train)),
+        "n_train_real": n_train_real,
+        "n_train_aug": n_train_aug,
+        "n_train_total": n_train_total,
         "batch_size": int(clf_cfg["train"].get("batch_size", 64)),
         "sampling_strategy": "real_plus_aug_concat",
+        **aug_sampling_meta,
     }
 
     if is_sklearn_model(model_type):
@@ -327,11 +475,13 @@ def train_classifier(
             "val_bal_acc": float(val_metrics.get("bal_acc", np.nan)),
             "val_kappa": float(val_metrics["kappa"]),
             "val_f1_macro": float(val_metrics["f1_macro"]),
-            "n_train_real": int(len(x_train_real)),
-            "n_train_aug": int(len(x_added_raw)),
-            "n_train_total": int(len(x_train)),
+            "n_train_real": n_train_real,
+            "n_train_aug": n_train_aug,
+            "n_train_total": n_train_total,
             "ratio": float(ratio),
             "alpha_tilde": alpha_tilde,
+            "ratio_effective": ratio_effective,
+            "alpha_effective": alpha_effective,
             "total_steps_target": 0,
             "total_steps_done": 0,
         }
@@ -514,11 +664,13 @@ def train_classifier(
         "val_bal_acc": float(best_val_metrics.get("bal_acc", np.nan)),
         "val_kappa": float(best_val_metrics.get("kappa", 0.0)),
         "val_f1_macro": float(best_val_metrics.get("f1_macro", 0.0)),
-        "n_train_real": int(len(x_train_real)),
-        "n_train_aug": int(len(x_added_raw)),
-        "n_train_total": int(len(x_train)),
+        "n_train_real": n_train_real,
+        "n_train_aug": n_train_aug,
+        "n_train_total": n_train_total,
         "ratio": float(ratio),
         "alpha_tilde": alpha_tilde,
+        "ratio_effective": ratio_effective,
+        "alpha_effective": alpha_effective,
         "total_steps_target": int(total_steps_target),
         "total_steps_done": int(total_steps_done),
     }
