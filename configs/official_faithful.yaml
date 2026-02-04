@@ -1,0 +1,80 @@
+enabled: true
+
+track_index: ./data/paper_track/atcnet_style/index.csv
+subjects: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+seeds: [0]
+
+models:
+  - eegnet_tf_faithful
+  - atcnet_tf_faithful
+
+split:
+  val_ratio: 0.2
+  split_seed: 42
+  stratify: false
+
+preprocess:
+  mode: channel_timepoint
+  eps: 1.0e-6
+
+paper_targets:
+  eegnet_tf_faithful:
+    metric: acc
+    value: 68.67
+    source: EEG-ATCNet README (BCI2a subject-specific TrainValTest)
+  atcnet_tf_faithful:
+    metric: acc
+    value: 81.10
+    source: EEG-ATCNet README (BCI2a subject-specific TrainValTest)
+
+acceptance:
+  max_abs_diff_pct: 2.0
+
+model_cfg:
+  eegnet_tf_faithful:
+    f1: 8
+    d: 2
+    kernel_length: 64
+    dropout: 0.25
+    max_norm_depthwise: 1.0
+    max_norm_linear: 0.25
+  atcnet_tf_faithful:
+    n_windows: 5
+    eegn_f1: 16
+    eegn_d: 2
+    eegn_kernel_size: 64
+    eegn_pool_size: 7
+    eegn_dropout: 0.3
+    tcn_depth: 2
+    tcn_kernel_size: 4
+    tcn_filters: 32
+    tcn_dropout: 0.3
+    conv_weight_decay: 0.009
+    dense_weight_decay: 0.5
+    conv_max_norm: 0.6
+
+train_cfg:
+  eegnet_tf_faithful:
+    epochs: 500
+    batch_size: 64
+    lr: 0.001
+    weight_decay: 0.0
+    num_workers: 0
+    device: auto
+    scheduler:
+      mode: min
+      factor: 0.9
+      patience: 20
+      min_lr: 1.0e-4
+  atcnet_tf_faithful:
+    epochs: 500
+    batch_size: 64
+    lr: 0.001
+    weight_decay: 0.0
+    num_workers: 0
+    device: auto
+    scheduler:
+      mode: min
+      factor: 0.9
+      patience: 20
+      min_lr: 1.0e-4

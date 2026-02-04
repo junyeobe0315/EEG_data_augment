@@ -1,0 +1,16 @@
+synth_ratio_list:
+- 0.0
+qc_on:
+- true
+gen_models:
+- cvae
+clf_models:
+- eegnet_tf_faithful
+- svm
+- eeg_conformer
+- ctnet
+vram_profile: 6gb
+apply_vram_presets: true
+use_paper_presets: false
+stage_mode: full
+screening_classifier: eegnet_tf_faithful

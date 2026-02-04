@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data / artifacts (large or generated)
+BCICIV_2a_gdf/
+data/raw/
+data/processed/
+data/splits/
+runs/
+results/
+
+# Logs / checkpoints
+*.log
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.npy
+*.csv
+*.png

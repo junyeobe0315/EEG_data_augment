@@ -1,0 +1,75 @@
+model:
+  type: cvae  # cvae | eeggan_net | cwgan_gp | conditional_ddpm
+
+  cvae:
+    latent_dim: 64
+    hidden_dim: 128
+    cond_dim: 16
+
+  eeggan_net:
+    latent_dim: 128
+    base_channels: 64
+    cond_dim: 16
+
+  cwgan_gp:
+    latent_dim: 128
+    base_channels: 64
+    cond_dim: 16
+
+  conditional_ddpm:
+    base_channels: 64
+    time_dim: 128
+    diffusion_steps: 200
+    beta_start: 1.0e-4
+    beta_end: 0.02
+
+vram_presets:
+  "6gb":
+    cvae:
+      batch_size: 64
+      n_per_class: 500
+    eeggan_net:
+      batch_size: 32
+      n_per_class: 400
+    cwgan_gp:
+      batch_size: 16
+      n_per_class: 300
+    conditional_ddpm:
+      batch_size: 8
+      n_per_class: 120
+      ddpm_steps: 60
+      diffusion_steps: 200
+  "7gb":
+    cvae:
+      batch_size: 96
+      n_per_class: 600
+    eeggan_net:
+      batch_size: 48
+      n_per_class: 500
+    cwgan_gp:
+      batch_size: 24
+      n_per_class: 400
+    conditional_ddpm:
+      batch_size: 12
+      n_per_class: 180
+      ddpm_steps: 80
+      diffusion_steps: 240
+
+train:
+  epochs: 50
+  batch_size: 32
+  lr: 0.001
+  cvae_lr: 0.001
+  gan_lr: 0.0002
+  ddpm_lr: 0.0002
+  weight_decay: 1.0e-5
+  beta_kl: 0.001
+  d_steps: 1
+  n_critic: 3
+  lambda_gp: 10.0
+  num_workers: 0
+  device: auto
+
+sample:
+  n_per_class: 300
+  ddpm_steps: 100

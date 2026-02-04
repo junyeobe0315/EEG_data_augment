@@ -1,0 +1,15 @@
+bandpass:
+  enabled: true
+  l_freq: 4.0
+  h_freq: 40.0
+notch:
+  enabled: true
+  freq: 50.0
+resample:
+  enabled: false
+  sfreq: 250
+normalization:
+  mode: channel_global
+  method: zscore
+  train_only: true
+  eps: 1.0e-6

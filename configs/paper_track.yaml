@@ -1,0 +1,115 @@
+enabled: true
+
+tracks:
+  atcnet_style:
+    description: "ATCNet/EEGNet 공식 구현과 맞춘 4.5s 윈도우 (trial-start 1.5~6.0s)"
+    window_mode: trial_start
+    tmin_sec: 1.5
+    tmax_sec: 6.0
+    filter:
+      type: none
+  eeg_conformer_style:
+    description: "EEG-Conformer 공식 구현과 맞춘 4s 윈도우 (trial-start 2.0~6.0s) + Cheby2 4-40Hz"
+    window_mode: trial_start
+    tmin_sec: 2.0
+    tmax_sec: 6.0
+    filter:
+      type: cheby2_bandpass
+      order: 6
+      rs: 60
+      l_freq: 4.0
+      h_freq: 40.0
+  ctnet_style:
+    description: "CTNet 공식 구현과 맞춘 4s 윈도우 (cue-onset 0~4s)"
+    window_mode: cue_onset
+    tmin_sec: 0.0
+    tmax_sec: 4.0
+    filter:
+      type: none
+
+model_track_map:
+  eegnet: atcnet_style
+  eegnet_tf_faithful: atcnet_style
+  atcnet: atcnet_style
+  atcnet_tf_faithful: atcnet_style
+  svm: atcnet_style
+  eeg_conformer: eeg_conformer_style
+  ctnet: ctnet_style
+
+model_val_ratio:
+  eegnet: 0.2
+  eegnet_tf_faithful: 0.2
+  atcnet: 0.2
+  atcnet_tf_faithful: 0.2
+  svm: 0.2
+  eeg_conformer: 0.0
+  ctnet: 0.3
+
+model_split_seed:
+  eegnet: 42
+  eegnet_tf_faithful: 42
+  atcnet: 42
+  atcnet_tf_faithful: 42
+  svm: 42
+  eeg_conformer: 0
+  ctnet: 0
+
+model_split_stratify:
+  eegnet: false
+  eegnet_tf_faithful: false
+  atcnet: false
+  atcnet_tf_faithful: false
+  svm: false
+  eeg_conformer: false
+  ctnet: true
+
+model_aug_mode:
+  eegnet: none
+  eegnet_tf_faithful: none
+  atcnet: none
+  atcnet_tf_faithful: none
+  svm: none
+  eeg_conformer: paper_sr
+  ctnet: paper_sr
+
+model_norm_mode:
+  eegnet: channel_timepoint
+  eegnet_tf_faithful: channel_timepoint
+  atcnet: channel_timepoint
+  atcnet_tf_faithful: channel_timepoint
+  svm: channel_timepoint
+  eeg_conformer: global_scalar
+  ctnet: global_scalar
+
+paper_targets:
+  eegnet:
+    metric: acc
+    value: 68.67
+    source: "EEG-ATCNet README (BCI2a subject-specific, TrainValTest)"
+  eegnet_tf_faithful:
+    metric: acc
+    value: 68.67
+    source: "EEG-ATCNet README (BCI2a subject-specific, TrainValTest)"
+  atcnet:
+    metric: acc
+    value: 81.10
+    source: "EEG-ATCNet README (BCI2a subject-specific, TrainValTest)"
+  atcnet_tf_faithful:
+    metric: acc
+    value: 81.10
+    source: "EEG-ATCNet README (BCI2a subject-specific, TrainValTest)"
+  eeg_conformer:
+    metric: acc
+    value: 77.66
+    source: "CTNet README table (Conformer subject-specific)"
+  ctnet:
+    metric: acc
+    value: 82.52
+    source: "CTNet README table (CTNet proposed subject-specific)"
+  svm:
+    metric: kappa
+    value: 0.569
+    source: "Ang et al. FBCSP, IEEE T-BME 2012"
+
+acceptance:
+  max_abs_diff_pct: 3.0

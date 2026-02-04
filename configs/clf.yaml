@@ -1,0 +1,203 @@
+model:
+  type: eegnet_tf_faithful
+  eegnet:
+    F1: 8
+    D: 2
+    F2: 16
+    kernel_length: 64
+    sep_kernel_length: 16
+    dropout: 0.25
+    max_norm_depthwise: 1.0
+    max_norm_linear: 0.25
+  eegnet_tf_faithful:
+    f1: 8
+    d: 2
+    kernel_length: 64
+    dropout: 0.25
+    max_norm_depthwise: 1.0
+    max_norm_linear: 0.25
+  svm:
+    C: 1.0
+    kernel: linear
+    gamma: scale
+    sfreq: 250
+    n_components: 4
+    bands:
+      - [4, 8]
+      - [8, 12]
+      - [12, 16]
+      - [16, 20]
+      - [20, 24]
+      - [24, 28]
+      - [28, 32]
+      - [32, 36]
+      - [36, 40]
+  eeg_conformer:
+    conv_channels: 40
+    emb_size: 40
+    n_heads: 10
+    n_layers: 6
+    temporal_kernel: 25
+    pool_kernel: 75
+    pool_stride: 15
+    fc1: 256
+    fc2: 32
+    dropout: 0.5
+  atcnet:
+    F1: 16
+    D: 2
+    F2: 32
+    kernel_length: 64
+    sep_kernel_length: 16
+    pool1: 8
+    pool2: 7
+    num_windows: 5
+    tcn_depth: 2
+    tcn_kernel_size: 4
+    tcn_filters: 32
+    n_heads: 4
+    dropout: 0.3
+  atcnet_tf_faithful:
+    n_windows: 5
+    eegn_f1: 16
+    eegn_d: 2
+    eegn_kernel_size: 64
+    eegn_pool_size: 7
+    eegn_dropout: 0.3
+    tcn_depth: 2
+    tcn_kernel_size: 4
+    tcn_filters: 32
+    tcn_dropout: 0.3
+    conv_weight_decay: 0.009
+    dense_weight_decay: 0.5
+    conv_max_norm: 0.6
+  ctnet:
+    emb_size: 40
+    n_heads: 8
+    n_layers: 3
+    F1: 20
+    D: 2
+    kernel_length: 64
+    sep_kernel_length: 16
+    pool1: 8
+    pool2: 8
+    dropout: 0.3
+    pos_dropout: 0.1
+    ff_mult: 4
+vram_presets:
+  6gb:
+    eegnet:
+      batch_size: 64
+    eegnet_tf_faithful:
+      batch_size: 64
+    svm:
+      batch_size: 0
+    eeg_conformer:
+      batch_size: 16
+    atcnet:
+      batch_size: 16
+    atcnet_tf_faithful:
+      batch_size: 16
+    ctnet:
+      batch_size: 12
+  7gb:
+    eegnet:
+      batch_size: 96
+    eegnet_tf_faithful:
+      batch_size: 96
+    svm:
+      batch_size: 0
+    eeg_conformer:
+      batch_size: 24
+    atcnet:
+      batch_size: 24
+    atcnet_tf_faithful:
+      batch_size: 24
+    ctnet:
+      batch_size: 16
+train:
+  epochs: 80
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  device: auto
+  scheduler:
+    enabled: false
+    type: plateau
+    mode: min
+    factor: 0.9
+    patience: 20
+    min_lr: 0.0001
+paper_presets:
+  enabled: false
+  eegnet:
+    epochs: 500
+    batch_size: 64
+    lr: 0.001
+    weight_decay: 0.0
+    scheduler:
+      enabled: true
+      type: plateau
+      mode: min
+      factor: 0.9
+      patience: 20
+      min_lr: 0.0001
+  eegnet_tf_faithful:
+    epochs: 500
+    batch_size: 64
+    lr: 0.001
+    weight_decay: 0.0
+    scheduler:
+      enabled: true
+      type: plateau
+      mode: min
+      factor: 0.9
+      patience: 20
+      min_lr: 0.0001
+  svm:
+    batch_size: 0
+  eeg_conformer:
+    epochs: 2000
+    batch_size: 72
+    lr: 0.0002
+    weight_decay: 0.0
+  atcnet:
+    epochs: 500
+    batch_size: 64
+    lr: 0.001
+    weight_decay: 0.0
+    scheduler:
+      enabled: true
+      type: plateau
+      mode: min
+      factor: 0.9
+      patience: 20
+      min_lr: 0.0001
+  atcnet_tf_faithful:
+    epochs: 500
+    batch_size: 64
+    lr: 0.001
+    weight_decay: 0.0
+    scheduler:
+      enabled: true
+      type: plateau
+      mode: min
+      factor: 0.9
+      patience: 20
+      min_lr: 0.0001
+  ctnet:
+    epochs: 2000
+    batch_size: 72
+    lr: 0.001
+    weight_decay: 0.0
+augmentation:
+  modes: [none, classical, mixup, paper_sr, gen_aug]
+  classical:
+    noise_std: 0.01
+    max_time_shift: 20
+  mixup:
+    alpha: 0.2
+  paper_sr:
+    n_aug: 3
+    n_segments: 8
