@@ -474,6 +474,108 @@ def _quick_proxy_eval(
     return score, metrics
 
 
+def _proportional_allocation(counts: np.ndarray, total: int) -> np.ndarray:
+    counts = counts.astype(np.float64)
+    out = np.zeros_like(counts, dtype=np.int64)
+    if total <= 0 or float(counts.sum()) <= 0:
+        return out
+    raw = counts / counts.sum() * float(total)
+    base = np.floor(raw).astype(np.int64)
+    remain = int(total - int(base.sum()))
+    if remain > 0:
+        frac = raw - base
+        order = np.argsort(-frac)
+        base[order[:remain]] += 1
+    return base.astype(np.int64)
+
+
+def _sample_synth_class_conditional(
+    sx_raw: np.ndarray,
+    sy: np.ndarray,
+    y_real: np.ndarray,
+    ratio: float,
+    allow_replacement: bool = True,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    n_real = int(len(y_real))
+    n_add = int(round(float(n_real) * float(ratio)))
+    if n_add <= 0 or len(sx_raw) <= 0:
+        return (
+            np.empty((0, sx_raw.shape[1], sx_raw.shape[2]), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            {
+                "aug_sampling_strategy": "proxy_gen_aug_class_conditional",
+                "n_add_requested": int(max(0, n_add)),
+                "n_add_actual": 0,
+                "class_counts_target": {},
+                "class_counts_actual": {},
+                "synth_pool_class_counts": {},
+                "missing_classes_in_synth_pool": [],
+                "replacement_used_classes": [],
+            },
+        )
+
+    y_real = y_real.astype(np.int64)
+    sy = sy.astype(np.int64)
+    n_classes = int(max(np.max(y_real), np.max(sy))) + 1
+
+    real_counts = np.bincount(y_real, minlength=n_classes)
+    target_counts = _proportional_allocation(real_counts, n_add)
+    pool_counts = np.bincount(sy, minlength=n_classes)
+    missing = [int(c) for c in range(n_classes) if target_counts[c] > 0 and pool_counts[c] <= 0]
+
+    xs = []
+    ys = []
+    replacement_used = []
+    for c in range(n_classes):
+        k = int(target_counts[c])
+        if k <= 0:
+            continue
+        pool_idx = np.where(sy == c)[0]
+        if len(pool_idx) <= 0:
+            continue
+        use_replace = bool(allow_replacement) and len(pool_idx) < k
+        pick = np.random.choice(pool_idx, size=k, replace=use_replace)
+        xs.append(sx_raw[pick].astype(np.float32))
+        ys.append(np.full((k,), c, dtype=np.int64))
+        if use_replace:
+            replacement_used.append(int(c))
+
+    if not xs:
+        return (
+            np.empty((0, sx_raw.shape[1], sx_raw.shape[2]), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            {
+                "aug_sampling_strategy": "proxy_gen_aug_class_conditional",
+                "n_add_requested": int(n_add),
+                "n_add_actual": 0,
+                "class_counts_target": {str(c): int(target_counts[c]) for c in range(n_classes)},
+                "class_counts_actual": {},
+                "synth_pool_class_counts": {str(c): int(pool_counts[c]) for c in range(n_classes)},
+                "missing_classes_in_synth_pool": missing,
+                "replacement_used_classes": [],
+            },
+        )
+
+    x_aug = np.concatenate(xs, axis=0)
+    y_aug = np.concatenate(ys, axis=0)
+    perm = np.random.permutation(len(y_aug))
+    x_aug = x_aug[perm]
+    y_aug = y_aug[perm]
+    actual_counts = np.bincount(y_aug, minlength=n_classes)
+
+    meta = {
+        "aug_sampling_strategy": "proxy_gen_aug_class_conditional",
+        "n_add_requested": int(n_add),
+        "n_add_actual": int(len(y_aug)),
+        "class_counts_target": {str(c): int(target_counts[c]) for c in range(n_classes)},
+        "class_counts_actual": {str(c): int(actual_counts[c]) for c in range(n_classes)},
+        "synth_pool_class_counts": {str(c): int(pool_counts[c]) for c in range(n_classes)},
+        "missing_classes_in_synth_pool": missing,
+        "replacement_used_classes": replacement_used,
+    }
+    return x_aug, y_aug, meta
+
+
 def _select_best_checkpoint(
     ckpt_candidates: list[dict[str, Any]],
     x_train_real: np.ndarray,
@@ -489,13 +591,60 @@ def _select_best_checkpoint(
     device: str,
     base_seed: int,
     out_dir: Path,
-) -> tuple[Path, list[dict[str, Any]]]:
+) -> tuple[Path, list[dict[str, Any]], dict[str, Any]]:
     sel_cfg = gen_cfg.get("checkpoint_selection", {})
     metric_key = str(sel_cfg.get("metric", "bal_acc"))
-    n_per_class = int(sel_cfg.get("sample_n_per_class", 80))
+    ratio_ref = float(sel_cfg.get("ratio_ref", sel_cfg.get("rho_ref", 1.0)))
     proxy_cfg = sel_cfg.get("proxy_classifier", {})
     qc_on = bool(sel_cfg.get("qc_enabled", True)) and qc_cfg is not None
     seed_offset = int(sel_cfg.get("seed_offset", 10000))
+
+    ratio_ref = max(0.0, float(ratio_ref))
+    alpha_ref = float(ratio_ref / (1.0 + ratio_ref)) if ratio_ref > 0.0 else 0.0
+
+    real_counts = np.bincount(y_train_real.astype(np.int64), minlength=int(num_classes))
+    max_real_class = int(real_counts.max()) if real_counts.size > 0 else 0
+
+    expected_keep = 1.0
+    if qc_on and qc_cfg is not None:
+        expected_keep = float(sel_cfg.get("expected_keep_ratio", qc_cfg.get("target_keep_ratio", 1.0)))
+    expected_keep = min(max(float(expected_keep), 0.05), 1.0)
+    overgen_buffer = float(sel_cfg.get("overgen_buffer", sel_cfg.get("buffer", 1.2)))
+    overgen_buffer = max(1.0, float(overgen_buffer))
+
+    min_n_per_class = int(sel_cfg.get("min_gen_n_per_class", 1))
+    max_n_per_class = int(sel_cfg.get("max_gen_n_per_class", sel_cfg.get("max_n_per_class", 500)))
+    base_n_per_class = int(sel_cfg.get("sample_n_per_class", 0))
+
+    target_n_per_class = int(np.ceil(float(max_real_class) * float(ratio_ref))) if (ratio_ref > 0.0 and max_real_class > 0) else 0
+    auto_n_per_class = int(np.ceil((float(target_n_per_class) / float(expected_keep)) * float(overgen_buffer))) if target_n_per_class > 0 else 0
+    n_per_class = int(max(0, max(base_n_per_class, auto_n_per_class)))
+    if target_n_per_class > 0:
+        n_per_class = int(max(n_per_class, min_n_per_class))
+    if n_per_class > 0:
+        n_per_class = int(np.clip(n_per_class, min_n_per_class, max_n_per_class))
+
+    selection_meta = {
+        "proxy_metric": metric_key,
+        "ratio_ref": float(ratio_ref),
+        "alpha_ref": float(alpha_ref),
+        "real_class_counts": {str(i): int(real_counts[i]) for i in range(int(num_classes))},
+        "target_n_per_class": int(target_n_per_class),
+        "sample_n_per_class_base": int(base_n_per_class),
+        "sample_n_per_class_auto": int(auto_n_per_class),
+        "sample_n_per_class_effective": int(n_per_class),
+        "qc_enabled": bool(qc_on),
+        "expected_keep_ratio": float(expected_keep),
+        "overgen_buffer": float(overgen_buffer),
+        "seed_offset": int(seed_offset),
+    }
+
+    # If the reference ratio is 0 (or no real data), selection is meaningless: pick the final checkpoint.
+    if ratio_ref <= 0.0 or max_real_class <= 0 or n_per_class <= 0:
+        best_path = Path(ckpt_candidates[-1]["path"])
+        with open(out_dir / "ckpt_scores.json", "w", encoding="utf-8") as f:
+            json.dump([], f, ensure_ascii=True, indent=2)
+        return best_path, [], selection_meta
 
     scores: list[dict[str, Any]] = []
     best_key: tuple[float, float, int] | None = None
@@ -537,17 +686,44 @@ def _select_best_checkpoint(
                 "epoch": int(c.get("epoch", -1)),
                 "ckpt_path": str(ckpt_path),
                 "eval_seed": int(eval_seed),
-                "proxy_metric": metric_key,
+                **selection_meta,
                 "proxy_score": float("-inf"),
                 "qc_keep_ratio": float(qc_report.get("keep_ratio", 0.0)),
+                "n_synth_before_qc": int(qc_report.get("n_before", synth["X"].shape[0])),
                 "n_synth_after_qc": n_after,
                 "selected": False,
             }
             scores.append(rec)
             continue
 
-        x_aug = norm.transform(kept["X"].astype(np.float32))
-        y_aug = kept["y"].astype(np.int64)
+        x_added_raw, y_added, aug_meta = _sample_synth_class_conditional(
+            sx_raw=kept["X"].astype(np.float32),
+            sy=kept["y"].astype(np.int64),
+            y_real=y_train_real.astype(np.int64),
+            ratio=ratio_ref,
+            allow_replacement=True,
+        )
+        if len(y_added) <= 0:
+            rec = {
+                "epoch": int(c.get("epoch", -1)),
+                "ckpt_path": str(ckpt_path),
+                "eval_seed": int(eval_seed),
+                **selection_meta,
+                "proxy_score": float("-inf"),
+                "qc_keep_ratio": float(qc_report.get("keep_ratio", 0.0)),
+                "n_synth_before_qc": int(qc_report.get("n_before", synth["X"].shape[0])),
+                "n_synth_after_qc": n_after,
+                "n_synth_used": 0,
+                "ratio_effective": 0.0,
+                "alpha_effective": 0.0,
+                **aug_meta,
+                "selected": False,
+            }
+            scores.append(rec)
+            continue
+
+        x_aug = norm.transform(x_added_raw.astype(np.float32))
+        y_aug = y_added.astype(np.int64)
 
         x_mix = np.concatenate([x_train_norm, x_aug], axis=0)
         y_mix = np.concatenate([y_train_real.astype(np.int64), y_aug], axis=0)
@@ -563,11 +739,16 @@ def _select_best_checkpoint(
             seed=eval_seed,
         )
 
+        n_real = int(len(y_train_real))
+        n_synth_used = int(len(y_aug))
+        ratio_effective = float(n_synth_used / max(1, n_real))
+        alpha_effective = float(n_synth_used / max(1, n_real + n_synth_used))
+
         rec = {
             "epoch": int(c.get("epoch", -1)),
             "ckpt_path": str(ckpt_path),
             "eval_seed": int(eval_seed),
-            "proxy_metric": metric_key,
+            **selection_meta,
             "proxy_score": float(score),
             "proxy_acc": float(metrics.get("acc", np.nan)),
             "proxy_bal_acc": float(metrics.get("bal_acc", np.nan)),
@@ -576,6 +757,10 @@ def _select_best_checkpoint(
             "qc_keep_ratio": float(qc_report.get("keep_ratio", 0.0)),
             "n_synth_before_qc": int(qc_report.get("n_before", synth["X"].shape[0])),
             "n_synth_after_qc": n_after,
+            "n_synth_used": int(n_synth_used),
+            "ratio_effective": float(ratio_effective),
+            "alpha_effective": float(alpha_effective),
+            **aug_meta,
             "selected": False,
         }
         scores.append(rec)
@@ -594,7 +779,7 @@ def _select_best_checkpoint(
     with open(out_dir / "ckpt_scores.json", "w", encoding="utf-8") as f:
         json.dump(scores, f, ensure_ascii=True, indent=2)
 
-    return best_path, scores
+    return best_path, scores, selection_meta
 
 
 def train_generative_model(
@@ -757,7 +942,7 @@ def train_generative_model(
     do_select = bool(sel_cfg.get("enabled", True)) and clf_cfg is not None and len(split.get("val_ids", [])) > 0
 
     if do_select:
-        best_ckpt, _ = _select_best_checkpoint(
+        best_ckpt, _, sel_meta = _select_best_checkpoint(
             ckpt_candidates=ckpt_candidates,
             x_train_real=x_train_real,
             y_train_real=y_train.astype(np.int64),
@@ -777,6 +962,7 @@ def train_generative_model(
     else:
         best_ckpt = Path(ckpt_candidates[-1]["path"])
         selected_by = "final_epoch"
+        sel_meta = {}
 
     final_ckpt = exp_dir / "ckpt.pt"
     shutil.copy2(best_ckpt, final_ckpt)
@@ -789,9 +975,16 @@ def train_generative_model(
         "checkpoint_every": int(checkpoint_every),
         "num_candidates": int(len(ckpt_candidates)),
         "base_seed": int(base_seed),
-        "proxy_metric": str(sel_cfg.get("metric", "bal_acc")),
-        "proxy_sample_n_per_class": int(sel_cfg.get("sample_n_per_class", 80)),
-        "proxy_qc_enabled": bool(sel_cfg.get("qc_enabled", True)),
+        "proxy_metric": str(sel_meta.get("proxy_metric", sel_cfg.get("metric", "bal_acc"))),
+        "proxy_ratio_ref": float(sel_meta.get("ratio_ref", sel_cfg.get("ratio_ref", sel_cfg.get("rho_ref", 1.0)))),
+        "proxy_alpha_ref": float(sel_meta.get("alpha_ref", 0.0)),
+        "proxy_qc_enabled": bool(sel_meta.get("qc_enabled", sel_cfg.get("qc_enabled", True))),
+        "proxy_expected_keep_ratio": float(sel_meta.get("expected_keep_ratio", 1.0)),
+        "proxy_overgen_buffer": float(sel_meta.get("overgen_buffer", 1.0)),
+        "proxy_sample_n_per_class_base": int(sel_meta.get("sample_n_per_class_base", sel_cfg.get("sample_n_per_class", 0))),
+        "proxy_sample_n_per_class_auto": int(sel_meta.get("sample_n_per_class_auto", 0)),
+        "proxy_sample_n_per_class_effective": int(sel_meta.get("sample_n_per_class_effective", 0)),
+        "checkpoint_selection": sel_meta,
     }
     with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
         json.dump(train_meta, f, ensure_ascii=True, indent=2)

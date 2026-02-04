@@ -114,13 +114,31 @@ def run_qc(
 
     target_keep_ratio = float(cfg.get("target_keep_ratio", 0.0))
     fallback_applied = False
-    if n > 0 and target_keep_ratio > 0.0 and float(mask.mean()) < target_keep_ratio:
-        k = min(n, max(1, int(np.ceil(n * target_keep_ratio))))
-        order = np.argsort(score)
-        relaxed = np.zeros(n, dtype=bool)
-        relaxed[order[:k]] = True
-        mask = relaxed
-        fallback_applied = True
+    if n > 0 and target_keep_ratio > 0.0:
+        if classwise:
+            # Keep per-class balance: relax thresholds per class if keep ratio is too low.
+            for cls in classes:
+                cls = int(cls)
+                synth_idx = synth["y"] == cls
+                n_cls = int(np.sum(synth_idx))
+                if n_cls <= 0:
+                    continue
+                if float(mask[synth_idx].mean()) >= target_keep_ratio:
+                    continue
+                k = min(n_cls, max(1, int(np.ceil(n_cls * target_keep_ratio))))
+                order = np.argsort(score[synth_idx])
+                relaxed = np.zeros(n_cls, dtype=bool)
+                relaxed[order[:k]] = True
+                mask[synth_idx] = relaxed
+                fallback_applied = True
+        else:
+            if float(mask.mean()) < target_keep_ratio:
+                k = min(n, max(1, int(np.ceil(n * target_keep_ratio))))
+                order = np.argsort(score)
+                relaxed = np.zeros(n, dtype=bool)
+                relaxed[order[:k]] = True
+                mask = relaxed
+                fallback_applied = True
 
     kept = {
         "X": synth["X"][mask],

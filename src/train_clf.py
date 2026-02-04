@@ -210,19 +210,6 @@ def _sample_gen_aug_class_conditional(
     pool_counts = np.bincount(sy, minlength=n_classes)
 
     missing = [int(c) for c in range(n_classes) if target_counts[c] > 0 and pool_counts[c] <= 0]
-    avail = [int(c) for c in range(n_classes) if pool_counts[c] > 0]
-
-    # Reallocate missing-class quota to available classes to keep total n_add stable.
-    if missing and avail:
-        leftover = int(sum(int(target_counts[c]) for c in missing))
-        for c in missing:
-            target_counts[c] = 0
-        avail_weights = real_counts[avail].astype(np.float64)
-        if float(avail_weights.sum()) <= 0:
-            avail_weights = np.ones(len(avail), dtype=np.float64)
-        alloc = _proportional_allocation(avail_weights, leftover)
-        for i, c in enumerate(avail):
-            target_counts[c] += int(alloc[i])
 
     if int(target_counts.sum()) <= 0:
         return (
@@ -430,6 +417,19 @@ def train_classifier(
         **aug_sampling_meta,
     }
 
+    # Best checkpoint selection should be configurable (BCI2a is often reported with Kappa).
+    eval_cfg = clf_cfg.get("evaluation", {})
+    best_ckpt_metric = str(eval_cfg.get("best_ckpt_metric", "kappa")).strip()
+    best_ckpt_direction = str(eval_cfg.get("best_ckpt_direction", "")).strip().lower()
+    if best_ckpt_direction not in {"min", "max"}:
+        best_ckpt_direction = "min" if best_ckpt_metric.endswith("loss") else "max"
+    train_meta.update(
+        {
+            "best_ckpt_metric": best_ckpt_metric,
+            "best_ckpt_direction": best_ckpt_direction,
+        }
+    )
+
     if is_sklearn_model(model_type):
         svm = build_svm_classifier(clf_cfg["model"])
         svm.fit(x_train, y_train)
@@ -531,8 +531,24 @@ def train_classifier(
         )
     ce = torch.nn.CrossEntropyLoss()
 
-    best_val = -1.0
+    def _best_ckpt_score(m: dict) -> float:
+        # Fall back gracefully to avoid "no ckpt saved" crashes due to a misconfigured key.
+        if best_ckpt_metric in m and np.isfinite(m.get(best_ckpt_metric, np.nan)):
+            return float(m[best_ckpt_metric])
+        for k in ("kappa", "bal_acc", "acc", "f1_macro", "loss"):
+            if k in m and np.isfinite(m.get(k, np.nan)):
+                return float(m[k])
+        return float("inf") if best_ckpt_direction == "min" else float("-inf")
+
+    def _is_better(cur: float, best: float) -> bool:
+        if best_ckpt_direction == "min":
+            return cur < best
+        return cur > best
+
+    best_score = float("inf") if best_ckpt_direction == "min" else float("-inf")
     best_val_metrics = {"acc": 0.0, "kappa": 0.0, "f1_macro": 0.0}
+    best_ckpt_step: int | None = None
+    best_ckpt_epoch: int | None = None
     total_steps_done = 0
     step_cfg = clf_cfg["train"].get("step_control", {})
     use_fixed_steps = bool(step_cfg.get("enabled", False)) and int(step_cfg.get("total_steps", 0)) > 0
@@ -580,9 +596,12 @@ def train_classifier(
                 },
             )
 
-            if val_metrics["acc"] > best_val:
-                best_val = val_metrics["acc"]
+            score = _best_ckpt_score(val_metrics)
+            if _is_better(score, best_score):
+                best_score = score
                 best_val_metrics = val_metrics
+                best_ckpt_step = int(total_steps_done)
+                best_ckpt_epoch = None
                 torch.save(
                     {
                         "state_dict": model.state_dict(),
@@ -619,9 +638,12 @@ def train_classifier(
                 sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
             append_jsonl(log_path, {"epoch": ep, "train_loss": float(np.mean(loss_meter)), **val_metrics})
 
-            if val_metrics["acc"] > best_val:
-                best_val = val_metrics["acc"]
+            score = _best_ckpt_score(val_metrics)
+            if _is_better(score, best_score):
+                best_score = score
                 best_val_metrics = val_metrics
+                best_ckpt_step = None
+                best_ckpt_epoch = int(ep)
                 torch.save(
                     {
                         "state_dict": model.state_dict(),
@@ -644,6 +666,9 @@ def train_classifier(
             "total_steps_target": int(total_steps_target),
             "total_steps_done": int(total_steps_done),
             "steps_per_eval": int(steps_per_eval if use_fixed_steps else max(1, len(tr_dl))),
+            "best_ckpt_score": float(best_score),
+            "best_ckpt_step": int(best_ckpt_step) if best_ckpt_step is not None else None,
+            "best_ckpt_epoch": int(best_ckpt_epoch) if best_ckpt_epoch is not None else None,
         }
     )
     with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
@@ -673,6 +698,11 @@ def train_classifier(
         "alpha_effective": alpha_effective,
         "total_steps_target": int(total_steps_target),
         "total_steps_done": int(total_steps_done),
+        "best_ckpt_metric": best_ckpt_metric,
+        "best_ckpt_direction": best_ckpt_direction,
+        "best_ckpt_score": float(best_score),
+        "best_ckpt_step": int(best_ckpt_step) if best_ckpt_step is not None else None,
+        "best_ckpt_epoch": int(best_ckpt_epoch) if best_ckpt_epoch is not None else None,
     }
     with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=True, indent=2)

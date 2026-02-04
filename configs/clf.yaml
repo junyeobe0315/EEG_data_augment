@@ -135,6 +135,8 @@ train:
     min_lr: 0.0001
 evaluation:
   evaluate_test: false
+  best_ckpt_metric: kappa
+  best_ckpt_direction: max
 paper_presets:
   enabled: false
   eegnet:

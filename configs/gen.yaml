@@ -80,7 +80,11 @@ sample:
 checkpoint_selection:
   enabled: true
   metric: bal_acc
-  sample_n_per_class: 80
+  ratio_ref: 1.0
+  overgen_buffer: 1.2
+  sample_n_per_class: 0
+  min_gen_n_per_class: 1
+  max_gen_n_per_class: 200
   qc_enabled: true
   seed_offset: 10000
   proxy_classifier:
