@@ -1,6 +1,6 @@
 protocol: cross_session
 val_ratio: 0.2
-test_ratio: 0.2
+test_ratio: 0.2  # Ignored when protocol=cross_session (E session is full test set)
 seeds: [0,1,2,3,4]
 loso_subjects: [1,2,3,4,5,6,7,8,9]
 stratify: true

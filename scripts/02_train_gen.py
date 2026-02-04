@@ -67,8 +67,11 @@ def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
 def main() -> None:
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
+    clf_cfg = load_yaml(ROOT / "configs/clf.yaml")
+    qc_cfg = load_yaml(ROOT / "configs/qc.yaml")
     sweep_cfg = load_yaml(ROOT / "configs/sweep.yaml")
     split_cfg = load_yaml(ROOT / "configs/split.yaml")
+    pp_cfg = load_yaml(ROOT / "configs/preprocess.yaml")
 
     default_model = normalize_generator_type(str(gen_cfg["model"].get("type", "cvae")))
     gen_models = [normalize_generator_type(m) for m in sweep_cfg.get("gen_models", [default_model])]
@@ -105,7 +108,17 @@ def main() -> None:
                 gmodel=gen_model,
             )
             out_dir = ROOT / "runs/gen" / exp_id
-            train_generative_model(split, index_df, run_cfg, load_yaml(ROOT / "configs/preprocess.yaml"), out_dir)
+            run_cfg.setdefault("data", {})["sfreq"] = int(data_cfg.get("sfreq", 250))
+            train_generative_model(
+                split=split,
+                index_df=index_df,
+                gen_cfg=run_cfg,
+                preprocess_cfg=pp_cfg,
+                out_dir=out_dir,
+                qc_cfg=qc_cfg,
+                clf_cfg=clf_cfg,
+                base_seed=seed,
+            )
             print(f"[done] {exp_id} bs={run_cfg['train']['batch_size']}")
 
 

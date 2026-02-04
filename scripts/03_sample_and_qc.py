@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from src.dataio import load_processed_index, load_samples_by_ids
 from src.models_gen import normalize_generator_type
 from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
-from src.utils import ensure_dir, load_yaml, make_exp_id
+from src.utils import ensure_dir, load_yaml, make_exp_id, set_seed
 
 
 def _load_split(path: Path) -> dict:
@@ -63,6 +64,17 @@ def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
     return True
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def main() -> None:
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
@@ -92,6 +104,10 @@ def main() -> None:
                 continue
             seed = int(split["seed"])
             subject = split.get("subject", "all")
+            try:
+                subject_i = int(subject)
+            except Exception:
+                subject_i = -1
             p = split.get("low_data_frac", 1.0)
 
             exp_id = make_exp_id(
@@ -108,6 +124,9 @@ def main() -> None:
                 print(f"Skip split {sf.name}, gen={gen_model}: checkpoint not found")
                 continue
 
+            synth_seed = int(seed + 1000)
+            qc_seed = int(seed + 2000)
+            set_seed(synth_seed)
             synth = sample_by_class(
                 ckpt_path=ckpt_path,
                 n_per_class=int(run_cfg["sample"].get("n_per_class", 300)),
@@ -118,6 +137,7 @@ def main() -> None:
             save_synth_npz(synth_path, synth)
 
             x_real_train, y_real_train = load_samples_by_ids(index_df, split["train_ids"])
+            set_seed(qc_seed)
             kept, report = run_qc(
                 real_x=x_real_train,
                 synth=synth,
@@ -127,6 +147,29 @@ def main() -> None:
             )
             kept_path = qc_dir / f"synth_qc_{gen_model}_{sf.stem}.npz"
             save_synth_npz(kept_path, kept)
+
+            synth_meta = {
+                "split": sf.stem,
+                "subject": subject_i,
+                "seed": int(seed),
+                "low_data_frac": float(p),
+                "generator": gen_model,
+                "generator_ckpt_path": str(ckpt_path),
+                "generator_ckpt_sha256": _sha256_file(ckpt_path),
+                "synth_seed": synth_seed,
+                "qc_seed": qc_seed,
+                "sample_n_per_class": int(run_cfg["sample"].get("n_per_class", 300)),
+                "ddpm_steps": int(run_cfg["sample"].get("ddpm_steps", 0)),
+                "n_synth_before_qc": int(report.get("n_before", synth["X"].shape[0])),
+                "n_synth_after_qc": int(report.get("n_after", kept["X"].shape[0])),
+                "qc_keep_ratio": float(report.get("keep_ratio", 0.0)),
+            }
+            with open(synth_path.with_suffix(".meta.json"), "w", encoding="utf-8") as f:
+                json.dump(synth_meta, f, ensure_ascii=True, indent=2)
+            with open(kept_path.with_suffix(".meta.json"), "w", encoding="utf-8") as f:
+                json.dump({**synth_meta, "qc_enabled": True}, f, ensure_ascii=True, indent=2)
+            with open(kept_path.with_suffix(".report.json"), "w", encoding="utf-8") as f:
+                json.dump(report, f, ensure_ascii=True, indent=2)
 
             reports.append({"split": sf.stem, "subject": subject, "seed": seed, "p": p, "gen_model": gen_model, **report})
 

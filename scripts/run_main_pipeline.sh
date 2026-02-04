@@ -16,3 +16,8 @@ fi
 "${PY[@]}" scripts/03_sample_and_qc.py
 "${PY[@]}" scripts/04_train_clf.py
 "${PY[@]}" scripts/05_eval_and_aggregate.py
+
+echo "[info] Main sweep finished with evaluate_test=false by default."
+echo "[info] For final test-only evaluation, run:"
+echo "       ${PY[*]} scripts/05b_final_test_eval.py --input-csv results/metrics/clf_cross_session.csv --output-csv results/metrics/clf_cross_session_test.csv"
+echo "       ${PY[*]} scripts/05_eval_and_aggregate.py --metrics-file clf_cross_session_test.csv"

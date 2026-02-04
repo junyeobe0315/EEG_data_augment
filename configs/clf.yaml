@@ -133,6 +133,8 @@ train:
     factor: 0.9
     patience: 20
     min_lr: 0.0001
+evaluation:
+  evaluate_test: false
 paper_presets:
   enabled: false
   eegnet:

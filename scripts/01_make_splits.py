@@ -50,6 +50,8 @@ def main() -> None:
 
     if split_cfg["protocol"] != "cross_session":
         raise ValueError("This script is now fixed for cross_session protocol.")
+    if "test_ratio" in split_cfg:
+        print("[info] cross_session protocol ignores split.test_ratio; E session is used as full test set.")
 
     split_dir = ensure_dir(ROOT / "data/splits")
     index_df = load_processed_index(data_cfg["index_path"])

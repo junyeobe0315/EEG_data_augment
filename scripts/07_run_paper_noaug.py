@@ -69,7 +69,7 @@ def main() -> None:
     for model_type in model_list:
         cfg = _apply_paper_preset(clf_cfg, model_type=model_type, epoch_cap=args.epoch_cap if args.epoch_cap > 0 else None)
         run_dir = ROOT / "runs/clf" / f"paper_none__subj-{args.subject:02d}__seed-{args.seed}__p-{p_tag}__clf-{model_type}"
-        metrics = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0)
+        metrics = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0, evaluate_test=True)
         rows.append(
             {
                 "subject": int(args.subject),

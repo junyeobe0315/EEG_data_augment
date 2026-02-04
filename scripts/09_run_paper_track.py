@@ -124,6 +124,7 @@ def main() -> None:
                 out_dir=run_dir,
                 mode=aug_mode,
                 ratio=0.0,
+                evaluate_test=True,
             )
             rows.append(
                 {

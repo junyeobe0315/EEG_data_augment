@@ -65,7 +65,7 @@ def main() -> None:
                     cfg["train"]["batch_size"] = int(bs)
 
             run_dir = ROOT / "runs/clf" / f"step1_none__subj-{subject:02d}__seed-{seed}__p-{tag}__clf-{clf_model}"
-            m = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0)
+            m = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0, evaluate_test=True)
             rows.append(
                 {
                     "subject": subject,

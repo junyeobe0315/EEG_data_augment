@@ -57,6 +57,7 @@ vram_presets:
 
 train:
   epochs: 50
+  checkpoint_every: 10
   batch_size: 32
   lr: 0.001
   cvae_lr: 0.001
@@ -73,3 +74,15 @@ train:
 sample:
   n_per_class: 300
   ddpm_steps: 100
+
+checkpoint_selection:
+  enabled: true
+  metric: bal_acc
+  sample_n_per_class: 80
+  qc_enabled: true
+  seed_offset: 10000
+  proxy_classifier:
+    model_type: eegnet_tf_faithful
+    steps: 120
+    batch_size: 64
+    lr: 0.001

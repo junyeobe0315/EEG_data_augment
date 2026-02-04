@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -141,10 +142,20 @@ def _attach_distribution_distance(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Attach distribution distances and aggregate run metrics")
+    ap.add_argument(
+        "--metrics-file",
+        type=str,
+        default=None,
+        help="Metrics csv filename under results/metrics (default: clf_<protocol>.csv)",
+    )
+    args = ap.parse_args()
+
     split_cfg = load_yaml(ROOT / "configs/split.yaml")
     sweep_cfg = load_yaml(ROOT / "configs/sweep.yaml")
 
-    metrics_csv = ROOT / "results/metrics" / f"clf_{split_cfg['protocol']}.csv"
+    metrics_name = args.metrics_file or f"clf_{split_cfg['protocol']}.csv"
+    metrics_csv = ROOT / "results/metrics" / metrics_name
     if not metrics_csv.exists():
         raise FileNotFoundError(f"Metrics file not found: {metrics_csv}. Run scripts/04_train_clf.py first.")
 
@@ -156,7 +167,12 @@ def main() -> None:
         sweep_cfg.get("analysis", {}).get("plots", {}).get("ratio_ref_for_r_curve", 1.0)
     )
     out_csv = ROOT / "results/tables/main_results.csv"
-    aggregate_metrics(ROOT / "results/metrics", out_csv, ratio_ref_for_r_curve=ratio_ref)
+    aggregate_metrics(
+        ROOT / "results/metrics",
+        out_csv,
+        ratio_ref_for_r_curve=ratio_ref,
+        metrics_filename=metrics_name,
+    )
     print(f"Saved aggregate tables -> {out_csv.parent}")
     print(f"Saved figures -> {(ROOT / 'results/figures')}")
 

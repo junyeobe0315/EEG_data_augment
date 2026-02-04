@@ -86,7 +86,7 @@ def _condition_name(mode: str, gen_model: str | None = None) -> str:
     if mode == "classical":
         return "C1_classical"
     if mode == "mixup":
-        return "C2_mixup"
+        return "C2_hard_mix"
     if mode == "gen_aug":
         return f"GenAug_{gen_model}" if gen_model else "GenAug"
     return f"Other_{mode}"
@@ -157,6 +157,7 @@ def main() -> None:
         for clf_model in clf_models:
             clf_run_cfg = _build_clf_cfg(clf_cfg, clf_model=clf_model, sweep_cfg=sweep_cfg)
             modes = [str(m) for m in clf_run_cfg.get("augmentation", {}).get("modes", ["none"])]
+            evaluate_test = bool(clf_run_cfg.get("evaluation", {}).get("evaluate_test", False))
 
             for mode in modes:
                 if mode == "none":
@@ -180,6 +181,7 @@ def main() -> None:
                         out_dir,
                         mode=mode,
                         ratio=ratio,
+                        evaluate_test=evaluate_test,
                     )
                     rows.append(
                         {
@@ -229,6 +231,7 @@ def main() -> None:
                             out_dir,
                             mode=mode,
                             ratio=ratio,
+                            evaluate_test=evaluate_test,
                         )
                         rows.append(
                             {
@@ -294,6 +297,7 @@ def main() -> None:
                                     mode=mode,
                                     ratio=ratio,
                                     synth_npz=str(synth_npz),
+                                    evaluate_test=evaluate_test,
                                 )
                                 rows.append(
                                     {

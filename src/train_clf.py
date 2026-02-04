@@ -204,6 +204,7 @@ def train_classifier(
     synth_npz: Optional[str] = None,
     synth_ratio: Optional[float] = None,
     aug_strength: Optional[float] = None,
+    evaluate_test: Optional[bool] = None,
 ) -> Dict[str, float]:
     # Backward-compatible aliases (legacy callers may pass synth_ratio/aug_strength).
     if synth_ratio is not None:
@@ -211,10 +212,14 @@ def train_classifier(
     if aug_strength is not None:
         ratio = float(aug_strength)
     ratio = float(ratio)
+    if evaluate_test is None:
+        evaluate_test = bool(clf_cfg.get("evaluation", {}).get("evaluate_test", False))
 
     x_train_real, y_train_real = load_samples_by_ids(index_df, split["train_ids"])
     x_val, y_val = load_samples_by_ids(index_df, split["val_ids"])
-    x_test, y_test = load_samples_by_ids(index_df, split["test_ids"])
+    x_test = y_test = None
+    if evaluate_test:
+        x_test, y_test = load_samples_by_ids(index_df, split["test_ids"])
 
     # Train-only normalization statistics.
     norm_cfg = preprocess_cfg["normalization"]
@@ -226,7 +231,8 @@ def train_classifier(
     x_train = norm.transform(x_train_real)
     y_train = y_train_real.copy()
     x_val = norm.transform(x_val)
-    x_test = norm.transform(x_test)
+    if evaluate_test and x_test is not None:
+        x_test = norm.transform(x_test)
 
     exp_dir = ensure_dir(out_dir)
     log_path = exp_dir / "log.jsonl"
@@ -268,6 +274,7 @@ def train_classifier(
         "model_type": model_type,
         "ratio": float(ratio),
         "alpha_tilde": alpha_tilde,
+        "evaluate_test": bool(evaluate_test),
         "n_train_real": int(len(x_train_real)),
         "n_train_aug": int(len(x_added_raw)),
         "n_train_total": int(len(x_train)),
@@ -280,12 +287,12 @@ def train_classifier(
         svm.fit(x_train, y_train)
 
         val_metrics = _evaluate_svm(svm, x_val, y_val)
-        test_metrics = _evaluate_svm(svm, x_test, y_test)
+        test_metrics = _evaluate_svm(svm, x_test, y_test) if evaluate_test and x_test is not None and y_test is not None else {}
 
         append_jsonl(log_path, {"epoch": 1, "train_size": int(len(x_train)), **val_metrics})
         joblib.dump(
             {
-                "svm_pipeline": svm.pipeline,
+                "svm_model": svm,
                 "normalizer": norm.state_dict(),
                 "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
                 "n_classes": int(np.max(y_train)) + 1,
@@ -305,9 +312,19 @@ def train_classifier(
         with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
             json.dump(train_meta, f, ensure_ascii=True, indent=2)
 
+        selected = test_metrics if evaluate_test else val_metrics
         out = {
-            **test_metrics,
+            "acc": float(selected.get("acc", np.nan)),
+            "bal_acc": float(selected.get("bal_acc", np.nan)),
+            "kappa": float(selected.get("kappa", np.nan)),
+            "f1_macro": float(selected.get("f1_macro", np.nan)),
+            "evaluated_on": "test" if evaluate_test else "val",
+            "test_acc": float(test_metrics.get("acc", np.nan)),
+            "test_bal_acc": float(test_metrics.get("bal_acc", np.nan)),
+            "test_kappa": float(test_metrics.get("kappa", np.nan)),
+            "test_f1_macro": float(test_metrics.get("f1_macro", np.nan)),
             "val_acc": float(val_metrics["acc"]),
+            "val_bal_acc": float(val_metrics.get("bal_acc", np.nan)),
             "val_kappa": float(val_metrics["kappa"]),
             "val_f1_macro": float(val_metrics["f1_macro"]),
             "n_train_real": int(len(x_train_real)),
@@ -337,13 +354,15 @@ def train_classifier(
 
     train_ds = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
     val_ds = TensorDataset(torch.from_numpy(x_val), torch.from_numpy(y_val))
-    test_ds = TensorDataset(torch.from_numpy(x_test), torch.from_numpy(y_test))
+    test_ds = None
+    if evaluate_test and x_test is not None and y_test is not None:
+        test_ds = TensorDataset(torch.from_numpy(x_test), torch.from_numpy(y_test))
 
     batch_size = int(clf_cfg["train"].get("batch_size", 64))
     num_workers = int(clf_cfg["train"].get("num_workers", 0))
     tr_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     va_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    te_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    te_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers) if test_ds is not None else None
 
     opt = torch.optim.Adam(
         model.parameters(),
@@ -465,10 +484,10 @@ def train_classifier(
                     exp_dir / "ckpt.pt",
                 )
 
-    # Evaluate best checkpoint on fixed test split.
+    # Evaluate best checkpoint on requested split.
     ckpt = torch.load(exp_dir / "ckpt.pt", map_location=device, weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
-    test_metrics = _evaluate_torch(model, te_dl, device)
+    test_metrics = _evaluate_torch(model, te_dl, device) if te_dl is not None else {}
     train_meta.update(
         {
             "step_mode": "fixed_steps" if use_fixed_steps else "epoch_loop",
@@ -480,9 +499,19 @@ def train_classifier(
     with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
         json.dump(train_meta, f, ensure_ascii=True, indent=2)
 
+    selected = test_metrics if evaluate_test else best_val_metrics
     out = {
-        **test_metrics,
+        "acc": float(selected.get("acc", np.nan)),
+        "bal_acc": float(selected.get("bal_acc", np.nan)),
+        "kappa": float(selected.get("kappa", np.nan)),
+        "f1_macro": float(selected.get("f1_macro", np.nan)),
+        "evaluated_on": "test" if evaluate_test else "val",
+        "test_acc": float(test_metrics.get("acc", np.nan)),
+        "test_bal_acc": float(test_metrics.get("bal_acc", np.nan)),
+        "test_kappa": float(test_metrics.get("kappa", np.nan)),
+        "test_f1_macro": float(test_metrics.get("f1_macro", np.nan)),
         "val_acc": float(best_val_metrics.get("acc", 0.0)),
+        "val_bal_acc": float(best_val_metrics.get("bal_acc", np.nan)),
         "val_kappa": float(best_val_metrics.get("kappa", 0.0)),
         "val_f1_macro": float(best_val_metrics.get("f1_macro", 0.0)),
         "n_train_real": int(len(x_train_real)),

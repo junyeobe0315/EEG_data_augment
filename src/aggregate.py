@@ -6,14 +6,18 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import linregress, pearsonr
+from scipy.stats import linregress, pearsonr, rankdata, ttest_rel, wilcoxon
 
 METRICS = ["acc", "kappa", "f1_macro"]
 
 
-def load_per_run_metrics(metrics_dir: str | Path) -> pd.DataFrame:
+def _present_metrics(df: pd.DataFrame) -> list[str]:
+    return [m for m in METRICS if m in df.columns]
+
+
+def load_per_run_metrics(metrics_dir: str | Path, metrics_filename: str = "clf_cross_session.csv") -> pd.DataFrame:
     metrics_dir = Path(metrics_dir)
-    primary = metrics_dir / "clf_cross_session.csv"
+    primary = metrics_dir / metrics_filename
     if primary.exists():
         return pd.read_csv(primary)
 
@@ -33,6 +37,10 @@ def load_per_run_metrics(metrics_dir: str | Path) -> pd.DataFrame:
 
 
 def aggregate_seed_mean_std(df: pd.DataFrame) -> pd.DataFrame:
+    metrics = _present_metrics(df)
+    if not metrics:
+        raise RuntimeError("No metric columns found for aggregation.")
+
     group_cols = [
         "protocol",
         "subject",
@@ -47,10 +55,10 @@ def aggregate_seed_mean_std(df: pd.DataFrame) -> pd.DataFrame:
     ]
     group_cols = [c for c in group_cols if c in df.columns]
 
-    agg = df.groupby(group_cols, dropna=False)[METRICS].agg(["mean", "std", "count"]).reset_index()
+    agg = df.groupby(group_cols, dropna=False)[metrics].agg(["mean", "std", "count"]).reset_index()
     agg.columns = ["_".join(c).strip("_") for c in agg.columns]
 
-    for m in METRICS:
+    for m in metrics:
         cnt_col = f"{m}_count"
         std_col = f"{m}_std"
         ci_col = f"{m}_ci95"
@@ -59,6 +67,10 @@ def aggregate_seed_mean_std(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def aggregate_over_subjects(seed_agg: pd.DataFrame) -> pd.DataFrame:
+    metrics = [m for m in METRICS if f"{m}_mean" in seed_agg.columns]
+    if not metrics:
+        raise RuntimeError("No seed-level metric columns found for subject aggregation.")
+
     base_cols = [
         "protocol",
         "p",
@@ -77,7 +89,7 @@ def aggregate_over_subjects(seed_agg: pd.DataFrame) -> pd.DataFrame:
     grp.columns = ["_".join(c).strip("_") for c in grp.columns]
 
     out = grp.copy()
-    for m in METRICS:
+    for m in metrics:
         mean_mean = f"{m}_mean_mean"
         mean_std = f"{m}_mean_std"
         mean_cnt = f"{m}_mean_count"
@@ -88,6 +100,7 @@ def aggregate_over_subjects(seed_agg: pd.DataFrame) -> pd.DataFrame:
 
 
 def reproducibility_check(df: pd.DataFrame, min_seed_runs: int = 3) -> pd.DataFrame:
+    metrics = _present_metrics(df)
     base = df[df["condition"] == "C0_no_aug"].copy() if "condition" in df.columns else df.copy()
 
     def _is_finite(s: pd.Series) -> bool:
@@ -97,7 +110,7 @@ def reproducibility_check(df: pd.DataFrame, min_seed_runs: int = 3) -> pd.DataFr
     for clf, sub in base.groupby("clf_model"):
         n_runs = int(len(sub))
         n_seeds = int(sub["seed"].nunique()) if "seed" in sub.columns else 0
-        finite_ok = all(_is_finite(sub[m]) for m in METRICS if m in sub.columns)
+        finite_ok = all(_is_finite(sub[m]) for m in metrics if m in sub.columns)
 
         rows.append(
             {
@@ -117,16 +130,107 @@ def reproducibility_check(df: pd.DataFrame, min_seed_runs: int = 3) -> pd.DataFr
 
 
 def add_baseline_gain(df: pd.DataFrame) -> pd.DataFrame:
+    metrics = _present_metrics(df)
     key_cols = ["split", "subject", "seed", "p", "clf_model"]
     key_cols = [c for c in key_cols if c in df.columns]
 
-    base = df[df["condition"] == "C0_no_aug"][key_cols + METRICS].copy()
-    base = base.rename(columns={m: f"baseline_{m}" for m in METRICS})
+    base = df[df["condition"] == "C0_no_aug"][key_cols + metrics].copy()
+    base = base.rename(columns={m: f"baseline_{m}" for m in metrics})
 
     out = df.merge(base, on=key_cols, how="left")
-    for m in METRICS:
+    for m in metrics:
         out[f"gain_{m}"] = out[m] - out[f"baseline_{m}"]
     return out
+
+
+def _rank_biserial(delta: np.ndarray) -> float:
+    nonzero = delta[np.abs(delta) > 1e-12]
+    if len(nonzero) == 0:
+        return float("nan")
+    ranks = rankdata(np.abs(nonzero))
+    w_pos = float(ranks[nonzero > 0].sum())
+    w_neg = float(ranks[nonzero < 0].sum())
+    denom = w_pos + w_neg
+    if denom <= 0:
+        return float("nan")
+    return (w_pos - w_neg) / denom
+
+
+def paired_condition_stats(df: pd.DataFrame) -> pd.DataFrame:
+    metrics = _present_metrics(df)
+    if "condition" not in df.columns or "subject" not in df.columns:
+        return pd.DataFrame()
+
+    rows = []
+    key_cols = ["protocol", "p", "clf_model"]
+    key_cols = [c for c in key_cols if c in df.columns]
+    cond_cols = ["condition", "gen_model", "mode", "ratio", "alpha_tilde", "qc_on", "evaluated_on"]
+    cond_cols = [c for c in cond_cols if c in df.columns]
+
+    base = df[df["condition"] == "C0_no_aug"].copy()
+    cond_df = df[df["condition"] != "C0_no_aug"].copy()
+    if len(base) == 0 or len(cond_df) == 0:
+        return pd.DataFrame()
+
+    for group_vals, grp in cond_df.groupby(key_cols + cond_cols, dropna=False):
+        if not isinstance(group_vals, tuple):
+            group_vals = (group_vals,)
+        gmap = dict(zip(key_cols + cond_cols, group_vals))
+
+        base_sub = base.copy()
+        for k in key_cols:
+            base_sub = base_sub[base_sub[k] == gmap[k]]
+        if len(base_sub) == 0:
+            continue
+
+        for m in metrics:
+            cond_s = grp.groupby("subject", dropna=False)[m].mean()
+            base_s = base_sub.groupby("subject", dropna=False)[m].mean()
+            paired = pd.concat([base_s.rename("baseline"), cond_s.rename("condition")], axis=1, join="inner").dropna()
+            if len(paired) == 0:
+                continue
+
+            delta = (paired["condition"] - paired["baseline"]).to_numpy(dtype=float)
+            n = int(len(delta))
+            mean_delta = float(np.mean(delta))
+            median_delta = float(np.median(delta))
+            std_delta = float(np.std(delta, ddof=1)) if n > 1 else float("nan")
+            ci_half = 1.96 * std_delta / np.sqrt(n) if n > 1 and np.isfinite(std_delta) else float("nan")
+
+            p_t = float("nan")
+            p_w = float("nan")
+            if n >= 2:
+                try:
+                    p_t = float(ttest_rel(paired["condition"], paired["baseline"], nan_policy="omit").pvalue)
+                except Exception:
+                    p_t = float("nan")
+                try:
+                    p_w = float(wilcoxon(delta, zero_method="wilcox", alternative="two-sided").pvalue)
+                except Exception:
+                    p_w = float("nan")
+
+            effect_d = float(mean_delta / std_delta) if n > 1 and std_delta > 0 else float("nan")
+            effect_rbc = _rank_biserial(delta)
+
+            row = {
+                **gmap,
+                "metric": m,
+                "n_subjects": n,
+                "baseline_mean": float(np.mean(paired["baseline"])),
+                "condition_mean": float(np.mean(paired["condition"])),
+                "mean_delta": mean_delta,
+                "median_delta": median_delta,
+                "delta_std": std_delta,
+                "ci95_low": float(mean_delta - ci_half) if np.isfinite(ci_half) else float("nan"),
+                "ci95_high": float(mean_delta + ci_half) if np.isfinite(ci_half) else float("nan"),
+                "p_value_ttest": p_t,
+                "p_value_wilcoxon": p_w,
+                "effect_size_cohen_d_paired": effect_d,
+                "effect_size_rank_biserial": effect_rbc,
+            }
+            rows.append(row)
+
+    return pd.DataFrame(rows)
 
 
 def distance_gain_correlation(df: pd.DataFrame) -> pd.DataFrame:
@@ -289,8 +393,13 @@ def _plot_distance_vs_gain(df: pd.DataFrame, out_path: Path, dist_col: str = "di
     plt.close(fig)
 
 
-def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, ratio_ref_for_r_curve: float = 1.0) -> dict[str, pd.DataFrame]:
-    per_run = load_per_run_metrics(metrics_dir)
+def aggregate_metrics(
+    metrics_dir: str | Path,
+    out_csv: str | Path,
+    ratio_ref_for_r_curve: float = 1.0,
+    metrics_filename: str = "clf_cross_session.csv",
+) -> dict[str, pd.DataFrame]:
+    per_run = load_per_run_metrics(metrics_dir, metrics_filename=metrics_filename)
     if "ratio" not in per_run.columns and "aug_strength" in per_run.columns:
         per_run["ratio"] = per_run["aug_strength"].astype(float)
     if "alpha_tilde" not in per_run.columns and "ratio" in per_run.columns:
@@ -303,6 +412,7 @@ def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, ratio_ref_fo
 
     with_gain = add_baseline_gain(per_run)
     corr = distance_gain_correlation(with_gain)
+    stats = paired_condition_stats(per_run)
 
     out_csv = Path(out_csv)
     tables_dir = out_csv.parent
@@ -318,8 +428,11 @@ def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, ratio_ref_fo
     with_gain.to_csv(tables_dir / "per_run_with_gain.csv", index=False)
     if len(corr) > 0:
         corr.to_csv(tables_dir / "distance_gain_correlation.csv", index=False)
+    if len(stats) > 0:
+        stats.to_csv(tables_dir / "stats_summary.csv", index=False)
 
-    for m in METRICS:
+    metrics = [m for m in METRICS if f"{m}_mean" in subj_agg.columns]
+    for m in metrics:
         cols = [
             c
             for c in ["protocol", "p", "clf_model", "condition", "gen_model", "mode", "ratio", "alpha_tilde", "qc_on", f"{m}_mean", f"{m}_std", f"{m}_ci95"]
@@ -344,4 +457,5 @@ def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, ratio_ref_fo
         "subject_agg": subj_agg,
         "repro": repro,
         "corr": corr,
+        "stats": stats,
     }
