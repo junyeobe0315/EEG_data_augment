@@ -64,4 +64,5 @@ CONDA_ENV=EEG ./scripts/run_official_faithful.sh
 ## Note on Validation Behavior
 - This track intentionally follows each paper/repo style, not the main strict protocol.
 - For models configured with `val_ratio=0` in `configs/paper_track.yaml` (e.g., some Conformer-style settings), `scripts/09_run_paper_track.py` uses `val=test` to emulate reference behavior.
+- Main-track fixed-step control (`train.step_control`) is explicitly disabled here so paper epoch settings are preserved.
 - Use this only for paper-faithful comparison, not for the main leakage-safe experiment.

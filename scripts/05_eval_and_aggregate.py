@@ -78,12 +78,12 @@ def _attach_distribution_distance(df: pd.DataFrame) -> pd.DataFrame:
         device = emb_device
 
     for i, row in out.iterrows():
-        aug_strength = float(row.get("aug_strength", 0.0))
+        ratio = float(row.get("ratio", 0.0))
         n_train_aug = int(row.get("n_train_aug", 0))
         aug_npz = Path(str(row.get("aug_npz", "")))
         split_name = str(row.get("split", ""))
 
-        if aug_strength <= 0 or n_train_aug <= 0 or not aug_npz.exists():
+        if ratio <= 0 or n_train_aug <= 0 or not aug_npz.exists():
             continue
         if split_name not in baseline_ckpts:
             continue
@@ -152,11 +152,11 @@ def main() -> None:
     df = _attach_distribution_distance(df)
     df.to_csv(metrics_csv, index=False)
 
-    alpha_ref = float(
-        sweep_cfg.get("analysis", {}).get("plots", {}).get("alpha_ref_for_r_curve", 1.0)
+    ratio_ref = float(
+        sweep_cfg.get("analysis", {}).get("plots", {}).get("ratio_ref_for_r_curve", 1.0)
     )
     out_csv = ROOT / "results/tables/main_results.csv"
-    aggregate_metrics(ROOT / "results/metrics", out_csv, alpha_ref_for_r_curve=alpha_ref)
+    aggregate_metrics(ROOT / "results/metrics", out_csv, ratio_ref_for_r_curve=ratio_ref)
     print(f"Saved aggregate tables -> {out_csv.parent}")
     print(f"Saved figures -> {(ROOT / 'results/figures')}")
 

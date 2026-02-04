@@ -61,7 +61,7 @@ def _resolve_stage_lists(
     sweep_cfg: dict,
     clf_models: list[str],
     gen_models: list[str],
-    alpha_list: list[float],
+    ratio_list: list[float],
     qc_on: list[bool],
 ) -> tuple[list[str], list[str], list[float], list[bool]]:
     stage = str(sweep_cfg.get("stage_mode", "full"))
@@ -69,13 +69,13 @@ def _resolve_stage_lists(
     if stage == "screening":
         clf_models = [normalize_classifier_type(str(sweep_cfg.get("screening_classifier", "eegnet")))]
         qc_on = [True]
-        return clf_models, gen_models, alpha_list, qc_on
+        return clf_models, gen_models, ratio_list, qc_on
 
     if stage == "full":
-        full_alphas = sweep_cfg.get("full_stage_alphas")
-        if full_alphas is not None:
-            alpha_list = [float(a) for a in full_alphas]
-        return clf_models, gen_models, alpha_list, qc_on
+        full_ratios = sweep_cfg.get("full_stage_ratios")
+        if full_ratios is not None:
+            ratio_list = [float(a) for a in full_ratios]
+        return clf_models, gen_models, ratio_list, qc_on
 
     raise ValueError(f"Unknown stage_mode: {stage}")
 
@@ -127,13 +127,13 @@ def main() -> None:
 
     clf_models = [normalize_classifier_type(m) for m in sweep_cfg.get("clf_models", [default_clf])]
     gen_models = [normalize_generator_type(m) for m in sweep_cfg.get("gen_models", [default_gen])]
-    alpha_list = [float(a) for a in sweep_cfg.get("alpha_list", [0.0, 0.25, 0.5, 1.0, 2.0])]
+    ratio_list = [float(a) for a in sweep_cfg.get("ratio_list", [0.0, 0.25, 0.5, 1.0, 2.0])]
     qc_on_list = [bool(v) for v in sweep_cfg.get("qc_on", [True])]
-    clf_models, gen_models, alpha_list, qc_on_list = _resolve_stage_lists(
+    clf_models, gen_models, ratio_list, qc_on_list = _resolve_stage_lists(
         sweep_cfg,
         clf_models,
         gen_models,
-        alpha_list,
+        ratio_list,
         qc_on_list,
     )
 
@@ -160,7 +160,7 @@ def main() -> None:
 
             for mode in modes:
                 if mode == "none":
-                    alpha = 0.0
+                    ratio = 0.0
                     exp_id = make_exp_id(
                         "clf",
                         split=sf.stem,
@@ -168,8 +168,7 @@ def main() -> None:
                         p=p,
                         clf=clf_model,
                         mode=mode,
-                        alpha=alpha,
-                        ratio=0.0,
+                        ratio=ratio,
                         qc=False,
                     )
                     out_dir = ROOT / "runs/clf" / exp_id
@@ -180,8 +179,7 @@ def main() -> None:
                         pp_cfg,
                         out_dir,
                         mode=mode,
-                        synth_ratio=0.0,
-                        aug_strength=alpha,
+                        ratio=ratio,
                     )
                     rows.append(
                         {
@@ -195,8 +193,8 @@ def main() -> None:
                             "gen_model": "none",
                             "condition": _condition_name(mode=mode),
                             "mode": mode,
-                            "aug_strength": alpha,
-                            "synth_ratio": 0.0,
+                            "ratio": ratio,
+                            "alpha_tilde": float(ratio / (1.0 + ratio)),
                             "qc_on": False,
                             "run_dir": str(out_dir),
                             "aug_npz": str(out_dir / "aug_used.npz"),
@@ -207,9 +205,9 @@ def main() -> None:
                     continue
 
                 if mode in {"classical", "mixup", "paper_sr"}:
-                    for alpha in alpha_list:
-                        alpha = float(alpha)
-                        if alpha <= 0:
+                    for ratio in ratio_list:
+                        ratio = float(ratio)
+                        if ratio <= 0:
                             continue
 
                         exp_id = make_exp_id(
@@ -219,8 +217,7 @@ def main() -> None:
                             p=p,
                             clf=clf_model,
                             mode=mode,
-                            alpha=alpha,
-                            ratio=0.0,
+                            ratio=ratio,
                             qc=False,
                         )
                         out_dir = ROOT / "runs/clf" / exp_id
@@ -231,8 +228,7 @@ def main() -> None:
                             pp_cfg,
                             out_dir,
                             mode=mode,
-                            synth_ratio=0.0,
-                            aug_strength=alpha,
+                            ratio=ratio,
                         )
                         rows.append(
                             {
@@ -246,8 +242,8 @@ def main() -> None:
                                 "gen_model": "none",
                                 "condition": _condition_name(mode=mode),
                                 "mode": mode,
-                                "aug_strength": alpha,
-                                "synth_ratio": 0.0,
+                                "ratio": ratio,
+                                "alpha_tilde": float(ratio / (1.0 + ratio)),
                                 "qc_on": False,
                                 "run_dir": str(out_dir),
                                 "aug_npz": str(out_dir / "aug_used.npz"),
@@ -258,9 +254,9 @@ def main() -> None:
                     continue
 
                 if mode == "gen_aug":
-                    for alpha in alpha_list:
-                        alpha = float(alpha)
-                        if alpha <= 0:
+                    for ratio in ratio_list:
+                        ratio = float(ratio)
+                        if ratio <= 0:
                             continue
 
                         for gen_model in gen_models:
@@ -273,7 +269,7 @@ def main() -> None:
                                 )
                                 if not synth_npz.exists():
                                     print(
-                                        f"Skip {sf.stem} clf={clf_model} gen={gen_model} alpha={alpha} qc={qc_on}: {synth_npz} missing"
+                                        f"Skip {sf.stem} clf={clf_model} gen={gen_model} ratio={ratio} qc={qc_on}: {synth_npz} missing"
                                     )
                                     continue
 
@@ -285,8 +281,7 @@ def main() -> None:
                                     clf=clf_model,
                                     gen=gen_model,
                                     mode=mode,
-                                    alpha=alpha,
-                                    ratio=alpha,
+                                    ratio=ratio,
                                     qc=bool(qc_on),
                                 )
                                 out_dir = ROOT / "runs/clf" / exp_id
@@ -297,9 +292,8 @@ def main() -> None:
                                     pp_cfg,
                                     out_dir,
                                     mode=mode,
-                                    synth_ratio=alpha,
+                                    ratio=ratio,
                                     synth_npz=str(synth_npz),
-                                    aug_strength=alpha,
                                 )
                                 rows.append(
                                     {
@@ -313,8 +307,8 @@ def main() -> None:
                                         "gen_model": gen_model,
                                         "condition": _condition_name(mode=mode, gen_model=gen_model),
                                         "mode": mode,
-                                        "aug_strength": alpha,
-                                        "synth_ratio": alpha,
+                                        "ratio": ratio,
+                                        "alpha_tilde": float(ratio / (1.0 + ratio)),
                                         "qc_on": bool(qc_on),
                                         "run_dir": str(out_dir),
                                         "aug_npz": str(out_dir / "aug_used.npz"),

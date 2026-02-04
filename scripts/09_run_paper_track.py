@@ -62,6 +62,7 @@ def _apply_paper_preset(clf_cfg: dict, model_type: str, epoch_cap: int) -> dict:
     for key in ("epochs", "batch_size", "lr", "weight_decay", "num_workers", "device"):
         if key in pp:
             cfg["train"][key] = pp[key]
+    cfg.setdefault("train", {}).setdefault("step_control", {})["enabled"] = False
     if "scheduler" in pp:
         cfg["train"]["scheduler"] = copy.deepcopy(pp["scheduler"])
     if int(epoch_cap) > 0:
@@ -122,7 +123,7 @@ def main() -> None:
                 preprocess_cfg=pp_cfg_model,
                 out_dir=run_dir,
                 mode=aug_mode,
-                synth_ratio=0.0,
+                ratio=0.0,
             )
             rows.append(
                 {

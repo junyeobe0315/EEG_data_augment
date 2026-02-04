@@ -127,6 +127,8 @@ python scripts/11_validate_pipeline.py --smoke
 3. Generator/QC fitting is train-only.
 4. Tuning uses validation only; test is final-only.
 5. Seeds are set and logged.
+6. Main sweep uses a single augmentation parameter `rho = N_synth/N_real` (with derived `alpha_tilde = rho/(1+rho)` for theory mapping).
+7. Deep classifiers use fixed-step control (`train.step_control`) to avoid “more samples => more optimizer updates” confounds.
 
 ### 9) Notes For Publication-Grade Release
 1. Include `results/tables/official_faithful_seed0_compare.csv` in supplementary material.

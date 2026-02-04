@@ -41,7 +41,8 @@ def aggregate_seed_mean_std(df: pd.DataFrame) -> pd.DataFrame:
         "condition",
         "gen_model",
         "mode",
-        "aug_strength",
+        "ratio",
+        "alpha_tilde",
         "qc_on",
     ]
     group_cols = [c for c in group_cols if c in df.columns]
@@ -65,7 +66,8 @@ def aggregate_over_subjects(seed_agg: pd.DataFrame) -> pd.DataFrame:
         "condition",
         "gen_model",
         "mode",
-        "aug_strength",
+        "ratio",
+        "alpha_tilde",
         "qc_on",
     ]
     base_cols = [c for c in base_cols if c in seed_agg.columns]
@@ -132,7 +134,7 @@ def distance_gain_correlation(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     rows = []
-    cand = df[(df.get("aug_strength", 0) > 0)].copy()
+    cand = df[(df.get("ratio", 0) > 0)].copy()
 
     for dist_col in ["dist_swd", "dist_mmd"]:
         if dist_col not in cand.columns:
@@ -178,15 +180,15 @@ def distance_gain_correlation(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _plot_accuracy_vs_alpha(df: pd.DataFrame, out_path: Path) -> None:
-    if "aug_strength" not in df.columns:
+def _plot_accuracy_vs_ratio(df: pd.DataFrame, out_path: Path) -> None:
+    if "ratio" not in df.columns:
         return
 
     plot_df = (
-        df.groupby(["clf_model", "condition", "aug_strength"], dropna=False)["acc"]
+        df.groupby(["clf_model", "condition", "ratio"], dropna=False)["acc"]
         .mean()
         .reset_index()
-        .sort_values(["clf_model", "condition", "aug_strength"])
+        .sort_values(["clf_model", "condition", "ratio"])
     )
 
     clf_list = sorted(plot_df["clf_model"].unique().tolist())
@@ -200,9 +202,9 @@ def _plot_accuracy_vs_alpha(df: pd.DataFrame, out_path: Path) -> None:
         ax = axes[i // ncols][i % ncols]
         sub = plot_df[plot_df["clf_model"] == clf]
         for cond, grp in sub.groupby("condition"):
-            ax.plot(grp["aug_strength"], grp["acc"], marker="o", label=str(cond))
-        ax.set_title(f"{clf}: Accuracy vs alpha")
-        ax.set_xlabel("alpha")
+            ax.plot(grp["ratio"], grp["acc"], marker="o", label=str(cond))
+        ax.set_title(f"{clf}: Accuracy vs ratio (rho)")
+        ax.set_xlabel("rho = N_synth / N_real")
         ax.set_ylabel("Accuracy")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
@@ -216,11 +218,11 @@ def _plot_accuracy_vs_alpha(df: pd.DataFrame, out_path: Path) -> None:
     plt.close(fig)
 
 
-def _plot_accuracy_vs_r(df: pd.DataFrame, out_path: Path, alpha_ref: float = 1.0) -> None:
+def _plot_accuracy_vs_r(df: pd.DataFrame, out_path: Path, ratio_ref: float = 1.0) -> None:
     if "p" not in df.columns:
         return
 
-    sub = df[(df["condition"] == "C0_no_aug") | (np.isclose(df.get("aug_strength", 0.0), alpha_ref))].copy()
+    sub = df[(df["condition"] == "C0_no_aug") | (np.isclose(df.get("ratio", 0.0), ratio_ref))].copy()
     if len(sub) == 0:
         return
 
@@ -262,7 +264,7 @@ def _plot_distance_vs_gain(df: pd.DataFrame, out_path: Path, dist_col: str = "di
     if dist_col not in df.columns or "gain_acc" not in df.columns:
         return
 
-    sub = df[np.isfinite(df[dist_col]) & np.isfinite(df["gain_acc"]) & (df.get("aug_strength", 0.0) > 0)].copy()
+    sub = df[np.isfinite(df[dist_col]) & np.isfinite(df["gain_acc"]) & (df.get("ratio", 0.0) > 0)].copy()
     if len(sub) < 3:
         return
 
@@ -287,8 +289,12 @@ def _plot_distance_vs_gain(df: pd.DataFrame, out_path: Path, dist_col: str = "di
     plt.close(fig)
 
 
-def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, alpha_ref_for_r_curve: float = 1.0) -> dict[str, pd.DataFrame]:
+def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, ratio_ref_for_r_curve: float = 1.0) -> dict[str, pd.DataFrame]:
     per_run = load_per_run_metrics(metrics_dir)
+    if "ratio" not in per_run.columns and "aug_strength" in per_run.columns:
+        per_run["ratio"] = per_run["aug_strength"].astype(float)
+    if "alpha_tilde" not in per_run.columns and "ratio" in per_run.columns:
+        per_run["alpha_tilde"] = per_run["ratio"].astype(float) / (1.0 + per_run["ratio"].astype(float))
 
     seed_agg = aggregate_seed_mean_std(per_run)
     subj_agg = aggregate_over_subjects(seed_agg)
@@ -316,7 +322,7 @@ def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, alpha_ref_fo
     for m in METRICS:
         cols = [
             c
-            for c in ["protocol", "p", "clf_model", "condition", "gen_model", "mode", "aug_strength", "qc_on", f"{m}_mean", f"{m}_std", f"{m}_ci95"]
+            for c in ["protocol", "p", "clf_model", "condition", "gen_model", "mode", "ratio", "alpha_tilde", "qc_on", f"{m}_mean", f"{m}_std", f"{m}_ci95"]
             if c in subj_agg.columns
         ]
         metric_table = subj_agg[cols].copy()
@@ -326,8 +332,10 @@ def aggregate_metrics(metrics_dir: str | Path, out_csv: str | Path, alpha_ref_fo
     # Backward-compatible default output.
     subj_agg.to_csv(out_csv, index=False)
 
-    _plot_accuracy_vs_alpha(per_run, figures_dir / "accuracy_vs_alpha.png")
-    _plot_accuracy_vs_r(per_run, figures_dir / "accuracy_vs_r.png", alpha_ref=float(alpha_ref_for_r_curve))
+    _plot_accuracy_vs_ratio(per_run, figures_dir / "accuracy_vs_ratio.png")
+    # Backward-compatible filename used in previous runs/docs.
+    _plot_accuracy_vs_ratio(per_run, figures_dir / "accuracy_vs_alpha.png")
+    _plot_accuracy_vs_r(per_run, figures_dir / "accuracy_vs_r.png", ratio_ref=float(ratio_ref_for_r_curve))
     _plot_distance_vs_gain(with_gain, figures_dir / "distance_vs_gain.png", dist_col="dist_swd")
 
     return {

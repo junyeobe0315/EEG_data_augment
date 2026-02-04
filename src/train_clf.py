@@ -104,13 +104,13 @@ def _build_offline_augmented_bank(
     mode: str,
     x_train: np.ndarray,
     y_train: np.ndarray,
-    aug_strength: float,
+    ratio: float,
     clf_cfg: Dict,
 ) -> tuple[np.ndarray, np.ndarray]:
-    if aug_strength <= 0:
+    if ratio <= 0:
         return np.empty((0, x_train.shape[1], x_train.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
 
-    n_add = int(round(len(x_train) * float(aug_strength)))
+    n_add = int(round(len(x_train) * float(ratio)))
     if n_add <= 0:
         return np.empty((0, x_train.shape[1], x_train.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
 
@@ -200,10 +200,18 @@ def train_classifier(
     preprocess_cfg: Dict,
     out_dir: str | Path,
     mode: str,
-    synth_ratio: float = 0.0,
+    ratio: float = 0.0,
     synth_npz: Optional[str] = None,
-    aug_strength: float = 0.0,
+    synth_ratio: Optional[float] = None,
+    aug_strength: Optional[float] = None,
 ) -> Dict[str, float]:
+    # Backward-compatible aliases (legacy callers may pass synth_ratio/aug_strength).
+    if synth_ratio is not None:
+        ratio = float(synth_ratio)
+    if aug_strength is not None:
+        ratio = float(aug_strength)
+    ratio = float(ratio)
+
     x_train_real, y_train_real = load_samples_by_ids(index_df, split["train_ids"])
     x_val, y_val = load_samples_by_ids(index_df, split["val_ids"])
     x_test, y_test = load_samples_by_ids(index_df, split["test_ids"])
@@ -232,15 +240,15 @@ def train_classifier(
             mode=mode,
             x_train=x_train_real,
             y_train=y_train,
-            aug_strength=float(aug_strength),
+            ratio=ratio,
             clf_cfg=clf_cfg,
         )
 
-    elif mode == "gen_aug" and float(synth_ratio) > 0 and synth_npz is not None:
+    elif mode == "gen_aug" and ratio > 0 and synth_npz is not None:
         synth = np.load(synth_npz)
         sx_raw = synth["X"].astype(np.float32)
         sy = synth["y"].astype(np.int64)
-        n_add = int(round(len(x_train_real) * float(synth_ratio)))
+        n_add = int(round(len(x_train_real) * ratio))
         if n_add > 0 and len(sx_raw) > 0:
             replace = len(sx_raw) < n_add
             idx = np.random.choice(len(sx_raw), size=n_add, replace=replace)
@@ -254,6 +262,18 @@ def train_classifier(
         np.savez_compressed(exp_dir / "aug_used.npz", X=x_added_raw, y=y_added)
 
     model_type = normalize_classifier_type(str(clf_cfg["model"].get("type", "eegnet")))
+    alpha_tilde = float(ratio / (1.0 + ratio))
+    train_meta = {
+        "mode": mode,
+        "model_type": model_type,
+        "ratio": float(ratio),
+        "alpha_tilde": alpha_tilde,
+        "n_train_real": int(len(x_train_real)),
+        "n_train_aug": int(len(x_added_raw)),
+        "n_train_total": int(len(x_train)),
+        "batch_size": int(clf_cfg["train"].get("batch_size", 64)),
+        "sampling_strategy": "real_plus_aug_concat",
+    }
 
     if is_sklearn_model(model_type):
         svm = build_svm_classifier(clf_cfg["model"])
@@ -274,6 +294,16 @@ def train_classifier(
             },
             exp_dir / "ckpt.pkl",
         )
+        train_meta.update(
+            {
+                "step_mode": "not_applicable_svm",
+                "total_steps_target": 0,
+                "total_steps_done": 0,
+                "steps_per_eval": 0,
+            }
+        )
+        with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
+            json.dump(train_meta, f, ensure_ascii=True, indent=2)
 
         out = {
             **test_metrics,
@@ -283,6 +313,10 @@ def train_classifier(
             "n_train_real": int(len(x_train_real)),
             "n_train_aug": int(len(x_added_raw)),
             "n_train_total": int(len(x_train)),
+            "ratio": float(ratio),
+            "alpha_tilde": alpha_tilde,
+            "total_steps_target": 0,
+            "total_steps_done": 0,
         }
         with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
             json.dump(out, f, ensure_ascii=True, indent=2)
@@ -330,49 +364,121 @@ def train_classifier(
 
     best_val = -1.0
     best_val_metrics = {"acc": 0.0, "kappa": 0.0, "f1_macro": 0.0}
+    total_steps_done = 0
+    step_cfg = clf_cfg["train"].get("step_control", {})
+    use_fixed_steps = bool(step_cfg.get("enabled", False)) and int(step_cfg.get("total_steps", 0)) > 0
+    total_steps_target = int(step_cfg.get("total_steps", 0)) if use_fixed_steps else 0
+    steps_per_eval = int(step_cfg.get("steps_per_eval", max(1, len(tr_dl))))
+    steps_per_eval = max(1, steps_per_eval)
 
-    for ep in range(1, int(clf_cfg["train"].get("epochs", 80)) + 1):
-        model.train()
-        loss_meter = []
+    if use_fixed_steps:
+        data_iter = iter(tr_dl)
+        while total_steps_done < total_steps_target:
+            model.train()
+            loss_meter = []
+            n_block = min(steps_per_eval, total_steps_target - total_steps_done)
+            for _ in range(n_block):
+                try:
+                    xb, yb = next(data_iter)
+                except StopIteration:
+                    data_iter = iter(tr_dl)
+                    xb, yb = next(data_iter)
 
-        for xb, yb in tr_dl:
-            xb, yb = xb.to(device), yb.to(device)
-            logits = model(xb)
-            loss = ce(logits, yb)
+                xb, yb = xb.to(device), yb.to(device)
+                logits = model(xb)
+                loss = ce(logits, yb)
 
-            # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
-            if hasattr(model, "regularization_loss"):
-                loss = loss + model.regularization_loss()
+                # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
+                if hasattr(model, "regularization_loss"):
+                    loss = loss + model.regularization_loss()
 
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-            loss_meter.append(float(loss.item()))
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                loss_meter.append(float(loss.item()))
+                total_steps_done += 1
 
-        val_metrics = _evaluate_torch(model, va_dl, device, criterion=ce)
-        if sched is not None:
-            sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
-        append_jsonl(log_path, {"epoch": ep, "train_loss": float(np.mean(loss_meter)), **val_metrics})
-
-        if val_metrics["acc"] > best_val:
-            best_val = val_metrics["acc"]
-            best_val_metrics = val_metrics
-            torch.save(
+            val_metrics = _evaluate_torch(model, va_dl, device, criterion=ce)
+            if sched is not None:
+                sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
+            append_jsonl(
+                log_path,
                 {
-                    "state_dict": model.state_dict(),
-                    "normalizer": norm.state_dict(),
-                    "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
-                    "n_classes": int(np.max(y_train)) + 1,
-                    "mode": mode,
-                    "model_type": model_type,
+                    "global_step": total_steps_done,
+                    "epoch_equiv": float(total_steps_done / max(1, len(tr_dl))),
+                    "train_loss": float(np.mean(loss_meter)),
+                    **val_metrics,
                 },
-                exp_dir / "ckpt.pt",
             )
+
+            if val_metrics["acc"] > best_val:
+                best_val = val_metrics["acc"]
+                best_val_metrics = val_metrics
+                torch.save(
+                    {
+                        "state_dict": model.state_dict(),
+                        "normalizer": norm.state_dict(),
+                        "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
+                        "n_classes": int(np.max(y_train)) + 1,
+                        "mode": mode,
+                        "model_type": model_type,
+                    },
+                    exp_dir / "ckpt.pt",
+                )
+    else:
+        for ep in range(1, int(clf_cfg["train"].get("epochs", 80)) + 1):
+            model.train()
+            loss_meter = []
+
+            for xb, yb in tr_dl:
+                xb, yb = xb.to(device), yb.to(device)
+                logits = model(xb)
+                loss = ce(logits, yb)
+
+                # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
+                if hasattr(model, "regularization_loss"):
+                    loss = loss + model.regularization_loss()
+
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                loss_meter.append(float(loss.item()))
+                total_steps_done += 1
+
+            val_metrics = _evaluate_torch(model, va_dl, device, criterion=ce)
+            if sched is not None:
+                sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
+            append_jsonl(log_path, {"epoch": ep, "train_loss": float(np.mean(loss_meter)), **val_metrics})
+
+            if val_metrics["acc"] > best_val:
+                best_val = val_metrics["acc"]
+                best_val_metrics = val_metrics
+                torch.save(
+                    {
+                        "state_dict": model.state_dict(),
+                        "normalizer": norm.state_dict(),
+                        "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
+                        "n_classes": int(np.max(y_train)) + 1,
+                        "mode": mode,
+                        "model_type": model_type,
+                    },
+                    exp_dir / "ckpt.pt",
+                )
 
     # Evaluate best checkpoint on fixed test split.
     ckpt = torch.load(exp_dir / "ckpt.pt", map_location=device, weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
     test_metrics = _evaluate_torch(model, te_dl, device)
+    train_meta.update(
+        {
+            "step_mode": "fixed_steps" if use_fixed_steps else "epoch_loop",
+            "total_steps_target": int(total_steps_target),
+            "total_steps_done": int(total_steps_done),
+            "steps_per_eval": int(steps_per_eval if use_fixed_steps else max(1, len(tr_dl))),
+        }
+    )
+    with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
+        json.dump(train_meta, f, ensure_ascii=True, indent=2)
 
     out = {
         **test_metrics,
@@ -382,6 +488,10 @@ def train_classifier(
         "n_train_real": int(len(x_train_real)),
         "n_train_aug": int(len(x_added_raw)),
         "n_train_total": int(len(x_train)),
+        "ratio": float(ratio),
+        "alpha_tilde": alpha_tilde,
+        "total_steps_target": int(total_steps_target),
+        "total_steps_done": int(total_steps_done),
     }
     with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=True, indent=2)

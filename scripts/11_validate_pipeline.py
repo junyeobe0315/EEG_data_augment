@@ -34,9 +34,9 @@ def validate_configs() -> None:
     _assert(len(low_data) > 0, "split.low_data_fracs must not be empty")
     _assert(all(0 < x <= 1.0 for x in low_data), "split.low_data_fracs must be in (0,1]")
 
-    alphas = [float(x) for x in sweep_cfg.get("alpha_list", [])]
-    _assert(len(alphas) > 0, "sweep.alpha_list must not be empty")
-    _assert(any(abs(a - 0.0) < 1e-12 for a in alphas), "sweep.alpha_list must include 0.0 baseline")
+    ratios = [float(x) for x in sweep_cfg.get("ratio_list", [])]
+    _assert(len(ratios) > 0, "sweep.ratio_list must not be empty")
+    _assert(any(abs(a - 0.0) < 1e-12 for a in ratios), "sweep.ratio_list must include 0.0 baseline")
 
     seeds = [int(x) for x in split_cfg.get("seeds", [])]
     _assert(len(seeds) > 0, "split.seeds must not be empty")
@@ -109,6 +109,10 @@ def run_smoke() -> None:
     cfg["model"]["type"] = "eegnet_tf_faithful"
     cfg["train"]["epochs"] = 1
     cfg["train"]["batch_size"] = 8
+    cfg["train"].setdefault("step_control", {})
+    cfg["train"]["step_control"]["enabled"] = True
+    cfg["train"]["step_control"]["total_steps"] = 10
+    cfg["train"]["step_control"]["steps_per_eval"] = 5
     cfg["augmentation"]["modes"] = ["none"]
 
     set_seed(seed)
@@ -120,8 +124,7 @@ def run_smoke() -> None:
         preprocess_cfg=pp_cfg,
         out_dir=out_dir,
         mode="none",
-        synth_ratio=0.0,
-        aug_strength=0.0,
+        ratio=0.0,
     )
     print(f"[smoke] acc={metrics['acc']:.4f} kappa={metrics['kappa']:.4f} f1={metrics['f1_macro']:.4f}")
 
