@@ -61,6 +61,8 @@ def build_critic(
 
 
 def load_generator_checkpoint(ckpt_path: str | Path, device: str = "cpu") -> dict[str, Any]:
-    ckpt = torch.load(Path(ckpt_path), map_location=device)
+    try:
+        ckpt = torch.load(Path(ckpt_path), map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(Path(ckpt_path), map_location=device)
     return ckpt
-

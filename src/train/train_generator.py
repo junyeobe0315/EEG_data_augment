@@ -238,7 +238,10 @@ def sample_from_generator(
     ddpm_steps: int | None = None,
 ) -> np.ndarray:
     """Sample synthetic data given a generator checkpoint and label array."""
-    ckpt = torch.load(Path(ckpt_path), map_location=device)
+    try:
+        ckpt = torch.load(Path(ckpt_path), map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(Path(ckpt_path), map_location=device)
     model_type = normalize_generator_type(str(ckpt.get("model_type", "cwgan_gp")))
     shape = ckpt.get("shape", {})
     in_channels = int(shape.get("c"))

@@ -23,7 +23,10 @@ class FrozenEEGNetEmbedder:
     def __init__(self, ckpt_path: str | Path, device: str = "cpu"):
         self.ckpt_path = Path(ckpt_path)
         self.device = str(device)
-        ckpt = torch.load(self.ckpt_path, map_location=self.device)
+        try:
+            ckpt = torch.load(self.ckpt_path, map_location=self.device, weights_only=False)
+        except TypeError:
+            ckpt = torch.load(self.ckpt_path, map_location=self.device)
         self.ckpt = ckpt
 
         model_type = normalize_classifier_type(str(ckpt.get("model_type", "eegnet")))
