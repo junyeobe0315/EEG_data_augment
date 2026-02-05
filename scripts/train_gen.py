@@ -48,11 +48,97 @@ def _parse_args() -> argparse.Namespace:
         help="Override generator training batch size for all gen models.",
     )
     parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Override generator training epochs.",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="Override generator base LR (also applies to model-specific LRs if not set).",
+    )
+    parser.add_argument(
+        "--cvae-lr",
+        type=float,
+        default=None,
+        help="Override CVAE LR.",
+    )
+    parser.add_argument(
+        "--gan-lr",
+        type=float,
+        default=None,
+        help="Override GAN LR (eeggan/cwgan).",
+    )
+    parser.add_argument(
+        "--ddpm-lr",
+        type=float,
+        default=None,
+        help="Override DDPM LR.",
+    )
+    parser.add_argument(
+        "--optimizer",
+        choices=["adam", "adamw", "sgd"],
+        default=None,
+        help="Override optimizer type.",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=None,
+        help="Override optimizer weight decay.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Override dataloader worker count.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Override device (auto/cpu/cuda).",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Re-train even if output checkpoint already exists.",
     )
     return parser.parse_args()
+
+
+def _apply_train_overrides(run_cfg: dict, args: argparse.Namespace) -> None:
+    tcfg = run_cfg.setdefault("train", {})
+
+    if args.batch_size is not None:
+        tcfg["batch_size"] = int(args.batch_size)
+    if args.epochs is not None:
+        tcfg["epochs"] = int(args.epochs)
+    if args.lr is not None:
+        lr = float(args.lr)
+        tcfg["lr"] = lr
+        if args.cvae_lr is None:
+            tcfg["cvae_lr"] = lr
+        if args.gan_lr is None:
+            tcfg["gan_lr"] = lr
+        if args.ddpm_lr is None:
+            tcfg["ddpm_lr"] = lr
+    if args.cvae_lr is not None:
+        tcfg["cvae_lr"] = float(args.cvae_lr)
+    if args.gan_lr is not None:
+        tcfg["gan_lr"] = float(args.gan_lr)
+    if args.ddpm_lr is not None:
+        tcfg["ddpm_lr"] = float(args.ddpm_lr)
+    if args.optimizer is not None:
+        tcfg["optimizer"] = str(args.optimizer)
+    if args.weight_decay is not None:
+        tcfg["weight_decay"] = float(args.weight_decay)
+    if args.num_workers is not None:
+        tcfg["num_workers"] = int(args.num_workers)
+    if args.device is not None:
+        tcfg["device"] = str(args.device)
 
 
 def main() -> None:
@@ -80,6 +166,7 @@ def main() -> None:
             sweep_cfg=sweep_cfg,
             override_batch_size=args.batch_size,
         )
+        _apply_train_overrides(run_cfg, args)
 
         for sf in split_files:
             split = load_json(sf)

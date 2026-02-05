@@ -66,11 +66,66 @@ def _parse_args() -> argparse.Namespace:
         help="Override classifier training batch size for all clf models.",
     )
     parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Override classifier training epochs.",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="Override classifier learning rate.",
+    )
+    parser.add_argument(
+        "--optimizer",
+        choices=["adam", "adamw", "sgd"],
+        default=None,
+        help="Override optimizer type.",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=None,
+        help="Override optimizer weight decay.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Override dataloader worker count.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Override device (auto/cpu/cuda).",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Re-train even if output metrics already exist.",
     )
     return parser.parse_args()
+
+
+def _apply_train_overrides(cfg: dict, args: argparse.Namespace) -> None:
+    tcfg = cfg.setdefault("train", {})
+
+    if args.batch_size is not None:
+        tcfg["batch_size"] = int(args.batch_size)
+    if args.epochs is not None:
+        tcfg["epochs"] = int(args.epochs)
+    if args.lr is not None:
+        tcfg["lr"] = float(args.lr)
+    if args.optimizer is not None:
+        tcfg["optimizer"] = str(args.optimizer)
+    if args.weight_decay is not None:
+        tcfg["weight_decay"] = float(args.weight_decay)
+    if args.num_workers is not None:
+        tcfg["num_workers"] = int(args.num_workers)
+    if args.device is not None:
+        tcfg["device"] = str(args.device)
 
 
 def _maybe_load_metrics(out_dir: Path, force: bool) -> dict | None:
@@ -198,6 +253,7 @@ def main() -> None:
                 sweep_cfg=sweep_cfg,
                 override_batch_size=args.batch_size,
             )
+            _apply_train_overrides(clf_run_cfg, args)
             modes = [str(m) for m in clf_run_cfg.get("augmentation", {}).get("modes", ["none"])]
             evaluate_test = bool(clf_run_cfg.get("evaluation", {}).get("evaluate_test", False))
 

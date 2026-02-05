@@ -96,6 +96,26 @@ def _infer_model_kwargs(
     raise ValueError(f"Unsupported model type: {model_type}")
 
 
+def _build_optimizer(
+    tcfg: Dict,
+    params,
+    lr: float,
+    weight_decay: float,
+    betas: tuple[float, float] | None = None,
+) -> torch.optim.Optimizer:
+    opt_name = str(tcfg.get("optimizer", "adam")).lower()
+    if opt_name == "adamw":
+        if betas is None:
+            betas = (0.9, 0.999)
+        return torch.optim.AdamW(params, lr=lr, betas=betas, weight_decay=weight_decay)
+    if opt_name == "sgd":
+        momentum = float(tcfg.get("momentum", 0.0))
+        return torch.optim.SGD(params, lr=lr, momentum=momentum, weight_decay=weight_decay)
+    if betas is None:
+        betas = (0.9, 0.999)
+    return torch.optim.Adam(params, lr=lr, betas=betas, weight_decay=weight_decay)
+
+
 def _train_cvae(
     dl: DataLoader,
     cfg: Dict,
@@ -117,7 +137,8 @@ def _train_cvae(
     ).to(device)
 
     tcfg = cfg["train"]
-    opt = torch.optim.Adam(
+    opt = _build_optimizer(
+        tcfg,
         model.parameters(),
         lr=float(tcfg.get("cvae_lr", tcfg.get("lr", 1e-3))),
         weight_decay=float(tcfg.get("weight_decay", 1e-5)),
@@ -186,8 +207,8 @@ def _train_eeggan(
     tcfg = cfg["train"]
     lr = float(tcfg.get("gan_lr", tcfg.get("lr", 2e-4)))
     wd = float(tcfg.get("weight_decay", 0.0))
-    opt_g = torch.optim.Adam(gen.parameters(), lr=lr, betas=(0.5, 0.999), weight_decay=wd)
-    opt_d = torch.optim.Adam(dis.parameters(), lr=lr, betas=(0.5, 0.999), weight_decay=wd)
+    opt_g = _build_optimizer(tcfg, gen.parameters(), lr=lr, weight_decay=wd, betas=(0.5, 0.999))
+    opt_d = _build_optimizer(tcfg, dis.parameters(), lr=lr, weight_decay=wd, betas=(0.5, 0.999))
     bce = torch.nn.BCEWithLogitsLoss()
 
     epochs = int(tcfg.get("epochs", 50))
@@ -287,8 +308,8 @@ def _train_cwgan_gp(
     tcfg = cfg["train"]
     lr = float(tcfg.get("gan_lr", tcfg.get("lr", 2e-4)))
     wd = float(tcfg.get("weight_decay", 0.0))
-    opt_g = torch.optim.Adam(gen.parameters(), lr=lr, betas=(0.5, 0.9), weight_decay=wd)
-    opt_c = torch.optim.Adam(critic.parameters(), lr=lr, betas=(0.5, 0.9), weight_decay=wd)
+    opt_g = _build_optimizer(tcfg, gen.parameters(), lr=lr, weight_decay=wd, betas=(0.5, 0.9))
+    opt_c = _build_optimizer(tcfg, critic.parameters(), lr=lr, weight_decay=wd, betas=(0.5, 0.9))
 
     epochs = int(tcfg.get("epochs", 50))
     n_critic = int(tcfg.get("n_critic", 3))
@@ -367,7 +388,8 @@ def _train_conditional_ddpm(
     ).to(device)
 
     tcfg = cfg["train"]
-    opt = torch.optim.Adam(
+    opt = _build_optimizer(
+        tcfg,
         model.parameters(),
         lr=float(tcfg.get("ddpm_lr", tcfg.get("lr", 1e-4))),
         weight_decay=float(tcfg.get("weight_decay", 0.0)),

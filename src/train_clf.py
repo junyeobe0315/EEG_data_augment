@@ -21,6 +21,18 @@ from src.preprocess import ZScoreNormalizer
 from src.utils import append_jsonl, build_ckpt_payload, ensure_dir, proportional_allocation, resolve_device, save_json
 
 
+def _build_optimizer(tcfg: Dict, params) -> torch.optim.Optimizer:
+    opt_name = str(tcfg.get("optimizer", "adam")).lower()
+    lr = float(tcfg.get("lr", 1e-3))
+    weight_decay = float(tcfg.get("weight_decay", 1e-4))
+    if opt_name == "adamw":
+        return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+    if opt_name == "sgd":
+        momentum = float(tcfg.get("momentum", 0.0))
+        return torch.optim.SGD(params, lr=lr, momentum=momentum, weight_decay=weight_decay)
+    return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
+
+
 def _classical_augment_numpy(
     x: np.ndarray,
     noise_std: float,
@@ -487,11 +499,7 @@ def train_classifier(
     va_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     te_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers) if test_ds is not None else None
 
-    opt = torch.optim.Adam(
-        model.parameters(),
-        lr=float(clf_cfg["train"].get("lr", 1e-3)),
-        weight_decay=float(clf_cfg["train"].get("weight_decay", 1e-4)),
-    )
+    opt = _build_optimizer(clf_cfg["train"], model.parameters())
     sched = None
     sched_cfg = clf_cfg["train"].get("scheduler", {})
     if bool(sched_cfg.get("enabled", False)) and str(sched_cfg.get("type", "plateau")).lower() == "plateau":

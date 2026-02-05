@@ -63,7 +63,32 @@ def _assert_any(pattern: str, msg: str) -> None:
 def _pipeline(argv: list[str]) -> None:
     ap = argparse.ArgumentParser(description="Run full pipeline (prepare -> splits -> gen -> qc -> clf -> aggregate).")
     ap.add_argument("--gen-batch", "--gen_batch", type=int, default=None, help="Override generator batch size.")
+    ap.add_argument("--gen-epochs", type=int, default=None, help="Override generator epochs.")
+    ap.add_argument("--gen-lr", type=float, default=None, help="Override generator base LR.")
+    ap.add_argument("--gen-cvae-lr", type=float, default=None, help="Override generator CVAE LR.")
+    ap.add_argument("--gen-gan-lr", type=float, default=None, help="Override generator GAN LR.")
+    ap.add_argument("--gen-ddpm-lr", type=float, default=None, help="Override generator DDPM LR.")
+    ap.add_argument(
+        "--gen-optimizer",
+        choices=["adam", "adamw", "sgd"],
+        default=None,
+        help="Override generator optimizer type.",
+    )
+    ap.add_argument("--gen-weight-decay", type=float, default=None, help="Override generator weight decay.")
+    ap.add_argument("--gen-num-workers", type=int, default=None, help="Override generator dataloader workers.")
+    ap.add_argument("--gen-device", type=str, default=None, help="Override generator device.")
     ap.add_argument("--clf-batch", "--clf_batch", type=int, default=None, help="Override classifier batch size.")
+    ap.add_argument("--clf-epochs", type=int, default=None, help="Override classifier epochs.")
+    ap.add_argument("--clf-lr", type=float, default=None, help="Override classifier learning rate.")
+    ap.add_argument(
+        "--clf-optimizer",
+        choices=["adam", "adamw", "sgd"],
+        default=None,
+        help="Override classifier optimizer type.",
+    )
+    ap.add_argument("--clf-weight-decay", type=float, default=None, help="Override classifier weight decay.")
+    ap.add_argument("--clf-num-workers", type=int, default=None, help="Override classifier dataloader workers.")
+    ap.add_argument("--clf-device", type=str, default=None, help="Override classifier device.")
     ap.add_argument("--force", action="store_true", help="Re-run even if outputs already exist.")
     args = ap.parse_args(argv)
 
@@ -83,8 +108,38 @@ def _pipeline(argv: list[str]) -> None:
     qc_args: list[str] = []
     if args.gen_batch is not None:
         gen_args += ["--batch-size", str(args.gen_batch)]
+    if args.gen_epochs is not None:
+        gen_args += ["--epochs", str(args.gen_epochs)]
+    if args.gen_lr is not None:
+        gen_args += ["--lr", str(args.gen_lr)]
+    if args.gen_cvae_lr is not None:
+        gen_args += ["--cvae-lr", str(args.gen_cvae_lr)]
+    if args.gen_gan_lr is not None:
+        gen_args += ["--gan-lr", str(args.gen_gan_lr)]
+    if args.gen_ddpm_lr is not None:
+        gen_args += ["--ddpm-lr", str(args.gen_ddpm_lr)]
+    if args.gen_optimizer is not None:
+        gen_args += ["--optimizer", str(args.gen_optimizer)]
+    if args.gen_weight_decay is not None:
+        gen_args += ["--weight-decay", str(args.gen_weight_decay)]
+    if args.gen_num_workers is not None:
+        gen_args += ["--num-workers", str(args.gen_num_workers)]
+    if args.gen_device is not None:
+        gen_args += ["--device", str(args.gen_device)]
     if args.clf_batch is not None:
         clf_args += ["--batch-size", str(args.clf_batch)]
+    if args.clf_epochs is not None:
+        clf_args += ["--epochs", str(args.clf_epochs)]
+    if args.clf_lr is not None:
+        clf_args += ["--lr", str(args.clf_lr)]
+    if args.clf_optimizer is not None:
+        clf_args += ["--optimizer", str(args.clf_optimizer)]
+    if args.clf_weight_decay is not None:
+        clf_args += ["--weight-decay", str(args.clf_weight_decay)]
+    if args.clf_num_workers is not None:
+        clf_args += ["--num-workers", str(args.clf_num_workers)]
+    if args.clf_device is not None:
+        clf_args += ["--device", str(args.clf_device)]
     if args.force:
         gen_args.append("--force")
         clf_args.append("--force")
