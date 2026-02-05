@@ -12,6 +12,7 @@ from src.augment.generate import (
     build_synthetic_with_qc,
     build_synthetic_pool,
     select_from_pool,
+    select_indices_from_pool,
 )
 from src.data.dataset import load_index, load_samples
 from src.data.normalize import ZScoreNormalizer
@@ -256,9 +257,11 @@ def run_experiment(
                 pool_alpha = float(alpha_ratio)
 
             x_syn = np.empty((0,))
-            y_syn = np.empty((0,))
+            y_syn = np.empty((0,), dtype=np.int64)
             pool_report: dict[str, Any] = {}
             select_report: dict[str, Any] = {}
+            pool_x = None
+            pool_y = None
 
             if pool_enabled and pool_alpha > 0.0:
                 pool_tag = f"pool_alpha_{pool_alpha:g}_qc_{int(qc_on)}"
@@ -267,8 +270,8 @@ def run_experiment(
 
                 if pool_npz.exists():
                     arr = np.load(pool_npz)
-                    x_pool = arr["X"]
-                    y_pool = arr["y"]
+                    pool_x = arr["X"]
+                    pool_y = arr["y"]
                     if pool_meta.exists():
                         try:
                             import json
@@ -278,7 +281,7 @@ def run_experiment(
                             pool_report = {}
                 else:
                     target_counts_pool = compute_target_counts(y_train, pool_alpha)
-                    x_pool, y_pool, pool_report = build_synthetic_pool(
+                    pool_x, pool_y, pool_report = build_synthetic_pool(
                         sample_fn=_sample_fn,
                         target_counts=target_counts_pool,
                         qc_state=qc_state if qc_on else None,
@@ -286,22 +289,14 @@ def run_experiment(
                         sfreq=int(dataset_cfg.get("sfreq", 250)),
                         buffer=buffer,
                     )
-                    np.savez_compressed(pool_npz, X=x_pool, y=y_pool)
+                    np.savez_compressed(pool_npz, X=pool_x, y=pool_y)
                     try:
                         write_json(pool_meta, pool_report)
                     except Exception:
                         pass
 
-                select_seed = stable_hash_seed(seed, {"alpha_ratio": alpha_ratio, "pool_tag": pool_tag})
-                x_syn, y_syn, select_report = select_from_pool(
-                    x_pool=x_pool,
-                    y_pool=y_pool,
-                    target_counts=target_counts,
-                    seed=select_seed,
-                )
-
-                qc_report = dict(pool_report)
-                qc_report.update(select_report)
+                if pool_x is None or pool_y is None:
+                    raise RuntimeError("Pool cache is invalid.")
             else:
                 x_syn, y_syn, qc_report = build_synthetic_with_qc(
                     sample_fn=_sample_fn,
@@ -311,8 +306,19 @@ def run_experiment(
                     sfreq=int(dataset_cfg.get("sfreq", 250)),
                     buffer=buffer,
                 )
+            if pool_enabled and pool_alpha > 0.0:
+                select_seed = stable_hash_seed(seed, {"alpha_ratio": alpha_ratio, "pool_tag": pool_tag})
+                x_syn, y_syn, select_report = select_from_pool(
+                    x_pool=pool_x,
+                    y_pool=pool_y,
+                    target_counts=target_counts,
+                    seed=select_seed,
+                )
+                qc_report = dict(pool_report)
+                qc_report.update(select_report)
+
             synth_data = (x_syn, y_syn)
-            ratio_effective = float(len(x_syn) / max(1, len(x_train)))
+            ratio_effective = float(len(y_syn) / max(1, len(x_train)))
             alpha_mix_effective = alpha_ratio_to_mix(ratio_effective)
 
             # Distance analysis
@@ -359,7 +365,8 @@ def run_experiment(
     )
 
     if use_linear_probe:
-        embed_dir = ensure_dir(Path("./artifacts/checkpoints") / f"gen_{_generator_run_id(subject, seed, r, generator, dataset_cfg, preprocess_cfg, gen_cfgs[generator])}" / "embedder_proxy")
+        gen_id_for_embed = _generator_run_id(subject, seed, r, generator, dataset_cfg, preprocess_cfg, gen_cfgs[generator])
+        embed_dir = ensure_dir(Path("./artifacts/checkpoints") / f"gen_{gen_id_for_embed}" / "embedder_proxy")
         embed_ckpt = embed_dir / "ckpt.pt"
         if not embed_ckpt.exists():
             embed_train_cfg = dict(model_cfgs["eegnet"]["train"])
@@ -385,12 +392,48 @@ def run_experiment(
             )
 
         embedder = FrozenEEGNetEmbedder(embed_ckpt, device=_resolve_device(model_cfgs["eegnet"]["train"]))
-        train_emb = embedder.transform(x_train)
-        val_emb = embedder.transform(x_val)
-        if synth_data is not None and len(synth_data[0]) > 0:
+        train_emb_path = embed_dir / "train_emb.npz"
+        val_emb_path = embed_dir / "val_emb.npz"
+
+        if train_emb_path.exists():
+            train_emb = np.load(train_emb_path)["Z"]
+        else:
+            train_emb = embedder.transform(x_train)
+            np.savez_compressed(train_emb_path, Z=train_emb)
+
+        if val_emb_path.exists():
+            val_emb = np.load(val_emb_path)["Z"]
+        else:
+            val_emb = embedder.transform(x_val)
+            np.savez_compressed(val_emb_path, Z=val_emb)
+
+        syn_emb = None
+        syn_y = None
+        if pool_enabled and pool_alpha > 0.0 and pool_x is not None and pool_y is not None:
+            pool_tag = f"pool_alpha_{pool_alpha:g}_qc_{int(qc_on)}"
+            pool_emb_path = gen_run_dir / f"{pool_tag}_emb.npz"
+            if pool_emb_path.exists():
+                arr = np.load(pool_emb_path)
+                pool_emb = arr["Z"]
+                pool_y = arr["y"]
+            else:
+                pool_emb = embedder.transform(pool_x)
+                np.savez_compressed(pool_emb_path, Z=pool_emb, y=pool_y)
+
+            select_seed = stable_hash_seed(seed, {"alpha_ratio": alpha_ratio, "pool_tag": pool_tag})
+            indices, _ = select_indices_from_pool(pool_y, target_counts, seed=select_seed)
+            if len(indices) > 0:
+                syn_emb = pool_emb[indices]
+                syn_y = pool_y[indices]
+                ratio_effective = float(len(indices) / max(1, len(x_train)))
+                alpha_mix_effective = alpha_ratio_to_mix(ratio_effective)
+        elif synth_data is not None and len(synth_data[0]) > 0:
             syn_emb = embedder.transform(synth_data[0])
+            syn_y = synth_data[1]
+
+        if syn_emb is not None and syn_y is not None and len(syn_emb) > 0:
             x_emb = np.concatenate([train_emb, syn_emb], axis=0)
-            y_emb = np.concatenate([y_train, synth_data[1]], axis=0)
+            y_emb = np.concatenate([y_train, syn_y], axis=0)
         else:
             x_emb = train_emb
             y_emb = y_train

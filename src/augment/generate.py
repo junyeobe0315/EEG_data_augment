@@ -146,3 +146,37 @@ def select_from_pool(
     if xs:
         return np.concatenate(xs, axis=0), np.concatenate(ys, axis=0), report
     return np.empty((0,)), np.empty((0,)), report
+
+
+def select_indices_from_pool(
+    y_pool: np.ndarray,
+    target_counts: dict[int, int],
+    seed: int,
+) -> tuple[np.ndarray, dict]:
+    """Select indices from a pool without materializing data."""
+    rng = np.random.default_rng(int(seed))
+    indices = []
+    report = {
+        "class_counts_pool": {},
+        "class_counts_used": {},
+        "pool_exhausted": False,
+    }
+    for cls, target in target_counts.items():
+        cls = int(cls)
+        target = int(target)
+        idx = np.where(y_pool == cls)[0]
+        report["class_counts_pool"][str(cls)] = int(len(idx))
+        if target <= 0 or len(idx) == 0:
+            report["class_counts_used"][str(cls)] = 0
+            continue
+        if len(idx) <= target:
+            choose = idx
+            report["pool_exhausted"] = True
+        else:
+            choose = rng.choice(idx, size=target, replace=False)
+        indices.append(choose)
+        report["class_counts_used"][str(cls)] = int(len(choose))
+
+    if indices:
+        return np.concatenate(indices, axis=0), report
+    return np.empty((0,), dtype=np.int64), report

@@ -16,4 +16,3 @@ alpha_search:
     max_iter: 200
     C: 1.0
     solver: lbfgs
-    n_jobs: 1
