@@ -226,6 +226,12 @@ def run_experiment(
     distance_rows: dict[str, Any] = {}
     ratio_effective = 0.0
     alpha_mix_effective = 0.0
+    pool_enabled = False  # default: no pool unless GenAug builds it
+    pool_alpha = 0.0  # default pool ratio
+    pool_x = None  # cached pool samples (if built)
+    pool_y = None  # cached pool labels (if built)
+    target_counts: dict[int, int] = {}  # per-class synth targets
+    gen_run_dir: Path | None = None  # generator run dir if built
 
     if method == "GenAug":
         if alpha_ratio <= 0.0:
@@ -485,7 +491,13 @@ def run_experiment(
 
         syn_emb = None
         syn_y = None
-        if pool_enabled and pool_alpha > 0.0 and pool_x is not None and pool_y is not None:
+        if (
+            pool_enabled
+            and pool_alpha > 0.0
+            and pool_x is not None
+            and pool_y is not None
+            and len(pool_x) > 0
+        ):
             pool_tag = f"pool_alpha_{pool_alpha:g}_qc_{int(qc_on)}"
             pool_emb_path = gen_run_dir / f"{pool_tag}_emb.npz"
             if pool_emb_path.exists():
