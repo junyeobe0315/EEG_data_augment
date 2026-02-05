@@ -68,6 +68,9 @@ pip install -r requirements.txt
 ### A. Main pipeline
 ```bash
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
+
+# Speed-optimized (AMP/TF32/pin_memory) on GPU
+CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --fast
 ```
 
 ### B. Final test-only evaluation (after selecting configs on `T_val`)

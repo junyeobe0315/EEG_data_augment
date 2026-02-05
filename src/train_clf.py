@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, Optional
+from contextlib import nullcontext
 
 import joblib
 import numpy as np
@@ -31,6 +32,33 @@ def _build_optimizer(tcfg: Dict, params) -> torch.optim.Optimizer:
         momentum = float(tcfg.get("momentum", 0.0))
         return torch.optim.SGD(params, lr=lr, momentum=momentum, weight_decay=weight_decay)
     return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
+
+
+def _resolve_amp(train_cfg: Dict, device: torch.device) -> tuple[bool, torch.dtype, torch.cuda.amp.GradScaler]:
+    amp_cfg = train_cfg.get("amp", {}) if isinstance(train_cfg, dict) else {}
+    enabled = bool(amp_cfg.get("enabled", False)) and device.type == "cuda"
+    dtype_name = str(amp_cfg.get("dtype", "float16")).lower()
+    dtype = torch.bfloat16 if dtype_name in {"bf16", "bfloat16"} else torch.float16
+    scaler = torch.cuda.amp.GradScaler(enabled=enabled)
+    return enabled, dtype, scaler
+
+
+def _autocast_ctx(enabled: bool, device: torch.device, dtype: torch.dtype):
+    if enabled and device.type == "cuda":
+        return torch.cuda.amp.autocast(dtype=dtype)
+    return nullcontext()
+
+
+def _apply_cuda_speed(train_cfg: Dict, device: torch.device) -> None:
+    if device.type != "cuda":
+        return
+    cuda_cfg = train_cfg.get("cuda", {}) if isinstance(train_cfg, dict) else {}
+    if bool(cuda_cfg.get("tf32", False)):
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    matmul_precision = cuda_cfg.get("matmul_precision")
+    if matmul_precision is not None and hasattr(torch, "set_float32_matmul_precision"):
+        torch.set_float32_matmul_precision(str(matmul_precision))
 
 
 def _classical_augment_numpy(
@@ -478,6 +506,9 @@ def train_classifier(
         return out
 
     device = resolve_device(clf_cfg["train"].get("device", "auto"))
+    _apply_cuda_speed(clf_cfg.get("train", {}), device)
+    amp_enabled, amp_dtype, scaler = _resolve_amp(clf_cfg.get("train", {}), device)
+    amp_ctx = lambda: _autocast_ctx(amp_enabled, device, amp_dtype)
 
     model = build_torch_classifier(
         model_type=model_type,
@@ -495,9 +526,26 @@ def train_classifier(
 
     batch_size = int(clf_cfg["train"].get("batch_size", 64))
     num_workers = int(clf_cfg["train"].get("num_workers", 0))
-    tr_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    va_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    te_dl = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers) if test_ds is not None else None
+    dl_cfg = clf_cfg.get("train", {}).get("dataloader", {})
+    pin_memory = bool(dl_cfg.get("pin_memory", device.type == "cuda"))
+    persistent_workers = bool(dl_cfg.get("persistent_workers", num_workers > 0))
+    prefetch_factor = dl_cfg.get("prefetch_factor", 2)
+    if num_workers <= 0:
+        persistent_workers = False
+        prefetch_factor = None
+    dl_kwargs = {"pin_memory": pin_memory}
+    if num_workers > 0:
+        dl_kwargs["persistent_workers"] = persistent_workers
+        if prefetch_factor is not None:
+            dl_kwargs["prefetch_factor"] = int(prefetch_factor)
+
+    tr_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, **dl_kwargs)
+    va_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, **dl_kwargs)
+    te_dl = (
+        DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, **dl_kwargs)
+        if test_ds is not None
+        else None
+    )
 
     opt = _build_optimizer(clf_cfg["train"], model.parameters())
     sched = None
@@ -537,17 +585,20 @@ def train_classifier(
                     data_iter = iter(tr_dl)
                     xb, yb = next(data_iter)
 
-                xb, yb = xb.to(device), yb.to(device)
-                logits = model(xb)
-                loss = ce(logits, yb)
+                xb = xb.to(device, non_blocking=(device.type == "cuda"))
+                yb = yb.to(device, non_blocking=(device.type == "cuda"))
+                with amp_ctx():
+                    logits = model(xb)
+                    loss = ce(logits, yb)
 
-                # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
-                if hasattr(model, "regularization_loss"):
-                    loss = loss + model.regularization_loss()
+                    # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
+                    if hasattr(model, "regularization_loss"):
+                        loss = loss + model.regularization_loss()
 
                 opt.zero_grad()
-                loss.backward()
-                opt.step()
+                scaler.scale(loss).backward()
+                scaler.step(opt)
+                scaler.update()
                 loss_meter.append(float(loss.item()))
                 total_steps_done += 1
 
@@ -581,17 +632,20 @@ def train_classifier(
             loss_meter = []
 
             for xb, yb in tr_dl:
-                xb, yb = xb.to(device), yb.to(device)
-                logits = model(xb)
-                loss = ce(logits, yb)
+                xb = xb.to(device, non_blocking=(device.type == "cuda"))
+                yb = yb.to(device, non_blocking=(device.type == "cuda"))
+                with amp_ctx():
+                    logits = model(xb)
+                    loss = ce(logits, yb)
 
-                # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
-                if hasattr(model, "regularization_loss"):
-                    loss = loss + model.regularization_loss()
+                    # Official faithful ATCNet includes explicit L2 regularization terms in the reference code.
+                    if hasattr(model, "regularization_loss"):
+                        loss = loss + model.regularization_loss()
 
                 opt.zero_grad()
-                loss.backward()
-                opt.step()
+                scaler.scale(loss).backward()
+                scaler.step(opt)
+                scaler.update()
                 loss_meter.append(float(loss.item()))
                 total_steps_done += 1
 

@@ -106,6 +106,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Re-train even if output checkpoint already exists.",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Enable speed-oriented settings (AMP/TF32/pin_memory).",
+    )
     return parser.parse_args()
 
 
@@ -141,6 +146,22 @@ def _apply_train_overrides(run_cfg: dict, args: argparse.Namespace) -> None:
         tcfg["device"] = str(args.device)
 
 
+def _apply_fast_overrides(run_cfg: dict, enable: bool) -> None:
+    if not enable:
+        return
+    tcfg = run_cfg.setdefault("train", {})
+    amp_cfg = tcfg.setdefault("amp", {})
+    amp_cfg["enabled"] = True
+    amp_cfg.setdefault("dtype", "float16")
+    dl_cfg = tcfg.setdefault("dataloader", {})
+    dl_cfg["pin_memory"] = True
+    dl_cfg["persistent_workers"] = True
+    dl_cfg.setdefault("prefetch_factor", 2)
+    cuda_cfg = tcfg.setdefault("cuda", {})
+    cuda_cfg["tf32"] = True
+    cuda_cfg.setdefault("matmul_precision", "high")
+
+
 def main() -> None:
     args = _parse_args()
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
@@ -167,6 +188,7 @@ def main() -> None:
             override_batch_size=args.batch_size,
         )
         _apply_train_overrides(run_cfg, args)
+        _apply_fast_overrides(run_cfg, args.fast)
 
         for sf in split_files:
             split = load_json(sf)

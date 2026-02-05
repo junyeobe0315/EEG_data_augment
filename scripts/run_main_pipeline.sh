@@ -14,6 +14,7 @@ echo "[info] Using python: ${PY[*]}"
 GEN_BATCH=""
 CLF_BATCH=""
 FORCE=0
+FAST=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gen_batch|--gen-batch)
@@ -34,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --force)
       FORCE=1
+      shift 1
+      ;;
+    --fast)
+      FAST=1
       shift 1
       ;;
     *)
@@ -60,6 +65,11 @@ if [[ "${FORCE}" -eq 1 ]]; then
   CLF_ARGS+=(--force)
   QC_ARGS+=(--force)
   PIPE_ARGS+=(--force)
+fi
+if [[ "${FAST}" -eq 1 ]]; then
+  GEN_ARGS+=(--fast)
+  CLF_ARGS+=(--fast)
+  PIPE_ARGS+=(--fast)
 fi
 
 ensure_common_dirs

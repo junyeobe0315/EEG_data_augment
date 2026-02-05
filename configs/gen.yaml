@@ -81,6 +81,16 @@ train:
   lambda_gp: 10.0
   num_workers: 0
   device: auto
+  amp:
+    enabled: false
+    dtype: float16
+  dataloader:
+    pin_memory: false
+    persistent_workers: false
+    prefetch_factor: 2
+  cuda:
+    tf32: false
+    matmul_precision: high
 
 sample:
   n_per_class: 300

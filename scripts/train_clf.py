@@ -106,6 +106,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Re-train even if output metrics already exist.",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Enable speed-oriented settings (AMP/TF32/pin_memory).",
+    )
     return parser.parse_args()
 
 
@@ -126,6 +131,22 @@ def _apply_train_overrides(cfg: dict, args: argparse.Namespace) -> None:
         tcfg["num_workers"] = int(args.num_workers)
     if args.device is not None:
         tcfg["device"] = str(args.device)
+
+
+def _apply_fast_overrides(cfg: dict, enable: bool) -> None:
+    if not enable:
+        return
+    tcfg = cfg.setdefault("train", {})
+    amp_cfg = tcfg.setdefault("amp", {})
+    amp_cfg["enabled"] = True
+    amp_cfg.setdefault("dtype", "float16")
+    dl_cfg = tcfg.setdefault("dataloader", {})
+    dl_cfg["pin_memory"] = True
+    dl_cfg["persistent_workers"] = True
+    dl_cfg.setdefault("prefetch_factor", 2)
+    cuda_cfg = tcfg.setdefault("cuda", {})
+    cuda_cfg["tf32"] = True
+    cuda_cfg.setdefault("matmul_precision", "high")
 
 
 def _maybe_load_metrics(out_dir: Path, force: bool) -> dict | None:
@@ -254,6 +275,7 @@ def main() -> None:
                 override_batch_size=args.batch_size,
             )
             _apply_train_overrides(clf_run_cfg, args)
+            _apply_fast_overrides(clf_run_cfg, args.fast)
             modes = [str(m) for m in clf_run_cfg.get("augmentation", {}).get("modes", ["none"])]
             evaluate_test = bool(clf_run_cfg.get("evaluation", {}).get("evaluate_test", False))
 

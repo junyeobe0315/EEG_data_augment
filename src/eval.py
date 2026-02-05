@@ -36,9 +36,9 @@ def evaluate_torch_classifier(
     ys, ps, losses = [], [], []
     with torch.no_grad():
         for xb, yb in loader:
-            xb = xb.to(device)
+            xb = xb.to(device, non_blocking=(device.type == "cuda"))
             yb_cpu = yb.numpy()
-            yb_dev = yb.to(device)
+            yb_dev = yb.to(device, non_blocking=(device.type == "cuda"))
             logits = model(xb)
             if criterion is not None:
                 loss = criterion(logits, yb_dev)

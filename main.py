@@ -90,6 +90,7 @@ def _pipeline(argv: list[str]) -> None:
     ap.add_argument("--clf-num-workers", type=int, default=None, help="Override classifier dataloader workers.")
     ap.add_argument("--clf-device", type=str, default=None, help="Override classifier device.")
     ap.add_argument("--force", action="store_true", help="Re-run even if outputs already exist.")
+    ap.add_argument("--fast", action="store_true", help="Enable speed-oriented settings (AMP/TF32/pin_memory).")
     args = ap.parse_args(argv)
 
     root = Path(".").resolve()
@@ -144,6 +145,9 @@ def _pipeline(argv: list[str]) -> None:
         gen_args.append("--force")
         clf_args.append("--force")
         qc_args.append("--force")
+    if args.fast:
+        gen_args.append("--fast")
+        clf_args.append("--fast")
 
     _run_module(s_train_gen, gen_args)
     _assert_any("runs/gen/*/ckpt.pt", "generator checkpoints missing under runs/gen/*/ckpt.pt")

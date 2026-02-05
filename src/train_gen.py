@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 from typing import Any, Callable, Dict
+from contextlib import nullcontext
 
 import numpy as np
 import pandas as pd
@@ -30,9 +31,49 @@ from src.utils import append_jsonl, ensure_dir, proportional_allocation, resolve
 SaveEpochCallback = Callable[[int, dict[str, Any], dict[str, float]], None]
 
 
-def _make_loader(x_train: np.ndarray, y_train: np.ndarray, batch_size: int, num_workers: int) -> DataLoader:
+def _make_loader(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    batch_size: int,
+    num_workers: int,
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int | None = None,
+) -> DataLoader:
     ds = TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train))
-    return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    kwargs = {"pin_memory": bool(pin_memory)}
+    if num_workers > 0:
+        kwargs["persistent_workers"] = bool(persistent_workers)
+        if prefetch_factor is not None:
+            kwargs["prefetch_factor"] = int(prefetch_factor)
+    return DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, **kwargs)
+
+
+def _resolve_amp(train_cfg: Dict, device: torch.device) -> tuple[bool, torch.dtype, torch.cuda.amp.GradScaler]:
+    amp_cfg = train_cfg.get("amp", {}) if isinstance(train_cfg, dict) else {}
+    enabled = bool(amp_cfg.get("enabled", False)) and device.type == "cuda"
+    dtype_name = str(amp_cfg.get("dtype", "float16")).lower()
+    dtype = torch.bfloat16 if dtype_name in {"bf16", "bfloat16"} else torch.float16
+    scaler = torch.cuda.amp.GradScaler(enabled=enabled)
+    return enabled, dtype, scaler
+
+
+def _autocast_ctx(enabled: bool, device: torch.device, dtype: torch.dtype):
+    if enabled and device.type == "cuda":
+        return torch.cuda.amp.autocast(dtype=dtype)
+    return nullcontext()
+
+
+def _apply_cuda_speed(train_cfg: Dict, device: torch.device) -> None:
+    if device.type != "cuda":
+        return
+    cuda_cfg = train_cfg.get("cuda", {}) if isinstance(train_cfg, dict) else {}
+    if bool(cuda_cfg.get("tf32", False)):
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    matmul_precision = cuda_cfg.get("matmul_precision")
+    if matmul_precision is not None and hasattr(torch, "set_float32_matmul_precision"):
+        torch.set_float32_matmul_precision(str(matmul_precision))
 
 
 def _model_section(cfg: Dict, model_type: str) -> Dict:
@@ -137,6 +178,8 @@ def _train_cvae(
     ).to(device)
 
     tcfg = cfg["train"]
+    amp_enabled, amp_dtype, scaler = _resolve_amp(tcfg, device)
+    amp_ctx = lambda: _autocast_ctx(amp_enabled, device, amp_dtype)
     opt = _build_optimizer(
         tcfg,
         model.parameters(),
@@ -154,12 +197,14 @@ def _train_cvae(
         kl_v = 0.0
 
         for xb, yb in dl:
-            xb = xb.to(device)
-            yb = yb.to(device)
-            out = model.loss(xb, yb, beta_kl=beta_kl)
+            xb = xb.to(device, non_blocking=(device.type == "cuda"))
+            yb = yb.to(device, non_blocking=(device.type == "cuda"))
+            with amp_ctx():
+                out = model.loss(xb, yb, beta_kl=beta_kl)
             opt.zero_grad()
-            out["loss"].backward()
-            opt.step()
+            scaler.scale(out["loss"]).backward()
+            scaler.step(opt)
+            scaler.update()
 
             loss_meter.append(float(out["loss"].item()))
             recon_v = float(out["recon"].item())
@@ -205,6 +250,8 @@ def _train_eeggan(
     ).to(device)
 
     tcfg = cfg["train"]
+    amp_enabled, amp_dtype, scaler = _resolve_amp(tcfg, device)
+    amp_ctx = lambda: _autocast_ctx(amp_enabled, device, amp_dtype)
     lr = float(tcfg.get("gan_lr", tcfg.get("lr", 2e-4)))
     wd = float(tcfg.get("weight_decay", 0.0))
     opt_g = _build_optimizer(tcfg, gen.parameters(), lr=lr, weight_decay=wd, betas=(0.5, 0.999))
@@ -221,33 +268,37 @@ def _train_eeggan(
         d_losses = []
 
         for xb, yb in dl:
-            xb = xb.to(device)
-            yb = yb.to(device)
+            xb = xb.to(device, non_blocking=(device.type == "cuda"))
+            yb = yb.to(device, non_blocking=(device.type == "cuda"))
             bs = xb.shape[0]
 
             for _ in range(d_steps):
                 z = torch.randn(bs, latent_dim, device=device)
-                fake = gen(z, yb).detach()
+                with amp_ctx():
+                    fake = gen(z, yb).detach()
 
-                real_logits = dis(xb, yb)
-                fake_logits = dis(fake, yb)
+                    real_logits = dis(xb, yb)
+                    fake_logits = dis(fake, yb)
 
-                real_target = torch.ones_like(real_logits)
-                fake_target = torch.zeros_like(fake_logits)
+                    real_target = torch.ones_like(real_logits)
+                    fake_target = torch.zeros_like(fake_logits)
 
-                d_loss = 0.5 * (bce(real_logits, real_target) + bce(fake_logits, fake_target))
+                    d_loss = 0.5 * (bce(real_logits, real_target) + bce(fake_logits, fake_target))
                 opt_d.zero_grad()
-                d_loss.backward()
-                opt_d.step()
+                scaler.scale(d_loss).backward()
+                scaler.step(opt_d)
+                scaler.update()
 
             z = torch.randn(bs, latent_dim, device=device)
-            fake = gen(z, yb)
-            g_logits = dis(fake, yb)
-            g_target = torch.ones_like(g_logits)
-            g_loss = bce(g_logits, g_target)
+            with amp_ctx():
+                fake = gen(z, yb)
+                g_logits = dis(fake, yb)
+                g_target = torch.ones_like(g_logits)
+                g_loss = bce(g_logits, g_target)
             opt_g.zero_grad()
-            g_loss.backward()
-            opt_g.step()
+            scaler.scale(g_loss).backward()
+            scaler.step(opt_g)
+            scaler.update()
 
             g_losses.append(float(g_loss.item()))
             d_losses.append(float(d_loss.item()))
@@ -306,6 +357,8 @@ def _train_cwgan_gp(
     ).to(device)
 
     tcfg = cfg["train"]
+    amp_enabled, amp_dtype, scaler = _resolve_amp(tcfg, device)
+    amp_ctx = lambda: _autocast_ctx(amp_enabled, device, amp_dtype)
     lr = float(tcfg.get("gan_lr", tcfg.get("lr", 2e-4)))
     wd = float(tcfg.get("weight_decay", 0.0))
     opt_g = _build_optimizer(tcfg, gen.parameters(), lr=lr, weight_decay=wd, betas=(0.5, 0.9))
@@ -323,30 +376,34 @@ def _train_cwgan_gp(
         c_losses = []
 
         for xb, yb in dl:
-            xb = xb.to(device)
-            yb = yb.to(device)
+            xb = xb.to(device, non_blocking=(device.type == "cuda"))
+            yb = yb.to(device, non_blocking=(device.type == "cuda"))
             bs = xb.shape[0]
 
             z = torch.randn(bs, latent_dim, device=device)
-            fake = gen(z, yb)
+            with amp_ctx():
+                fake = gen(z, yb)
 
-            c_real = critic(xb, yb).mean()
-            c_fake = critic(fake.detach(), yb).mean()
-            gp = _gradient_penalty(critic, xb, fake.detach(), yb, device)
-            c_loss = c_fake - c_real + lambda_gp * gp
+                c_real = critic(xb, yb).mean()
+                c_fake = critic(fake.detach(), yb).mean()
+                gp = _gradient_penalty(critic, xb, fake.detach(), yb, device)
+                c_loss = c_fake - c_real + lambda_gp * gp
             opt_c.zero_grad()
-            c_loss.backward()
-            opt_c.step()
+            scaler.scale(c_loss).backward()
+            scaler.step(opt_c)
+            scaler.update()
 
             step += 1
             g_loss = torch.tensor(0.0, device=device)
             if step % n_critic == 0:
                 z = torch.randn(bs, latent_dim, device=device)
-                fake = gen(z, yb)
-                g_loss = -critic(fake, yb).mean()
+                with amp_ctx():
+                    fake = gen(z, yb)
+                    g_loss = -critic(fake, yb).mean()
                 opt_g.zero_grad()
-                g_loss.backward()
-                opt_g.step()
+                scaler.scale(g_loss).backward()
+                scaler.step(opt_g)
+                scaler.update()
 
             c_losses.append(float(c_loss.item()))
             g_losses.append(float(g_loss.item()))
@@ -388,6 +445,8 @@ def _train_conditional_ddpm(
     ).to(device)
 
     tcfg = cfg["train"]
+    amp_enabled, amp_dtype, scaler = _resolve_amp(tcfg, device)
+    amp_ctx = lambda: _autocast_ctx(amp_enabled, device, amp_dtype)
     opt = _build_optimizer(
         tcfg,
         model.parameters(),
@@ -402,12 +461,14 @@ def _train_conditional_ddpm(
         loss_meter = []
 
         for xb, yb in dl:
-            xb = xb.to(device)
-            yb = yb.to(device)
-            out = model.loss(xb, yb)
+            xb = xb.to(device, non_blocking=(device.type == "cuda"))
+            yb = yb.to(device, non_blocking=(device.type == "cuda"))
+            with amp_ctx():
+                out = model.loss(xb, yb)
             opt.zero_grad()
-            out["loss"].backward()
-            opt.step()
+            scaler.scale(out["loss"]).backward()
+            scaler.step(opt)
+            scaler.update()
             loss_meter.append(float(out["loss"].item()))
 
         log_rec = {"epoch": ep, "loss": float(np.mean(loss_meter))}
@@ -816,12 +877,28 @@ def train_generative_model(
     x_val = norm.transform(x_val_real)
 
     device_t = resolve_device(gen_cfg["train"].get("device", "auto"))
+    _apply_cuda_speed(gen_cfg.get("train", {}), device_t)
     device = str(device_t)
     model_type = normalize_generator_type(str(gen_cfg["model"].get("type", "cvae")))
 
     batch_size = int(gen_cfg["train"].get("batch_size", 32))
     num_workers = int(gen_cfg["train"].get("num_workers", 0))
-    dl = _make_loader(x_train, y_train, batch_size=batch_size, num_workers=num_workers)
+    dl_cfg = gen_cfg.get("train", {}).get("dataloader", {})
+    pin_memory = bool(dl_cfg.get("pin_memory", device_t.type == "cuda"))
+    persistent_workers = bool(dl_cfg.get("persistent_workers", num_workers > 0))
+    prefetch_factor = dl_cfg.get("prefetch_factor", 2)
+    if num_workers <= 0:
+        persistent_workers = False
+        prefetch_factor = None
+    dl = _make_loader(
+        x_train,
+        y_train,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor,
+    )
 
     exp_dir = ensure_dir(out_dir)
     log_path = exp_dir / "log.jsonl"

@@ -141,6 +141,16 @@ train:
     enabled: true
     total_steps: 2000
     steps_per_eval: 100
+  amp:
+    enabled: false
+    dtype: float16
+  dataloader:
+    pin_memory: false
+    persistent_workers: false
+    prefetch_factor: 2
+  cuda:
+    tf32: false
+    matmul_precision: high
   scheduler:
     enabled: false
     type: plateau
