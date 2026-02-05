@@ -17,12 +17,7 @@ from src.dataio import load_processed_index, load_samples_by_ids
 from src.models_gen import normalize_generator_type
 from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
-from src.utils import ensure_dir, load_yaml, make_exp_id, set_seed
-
-
-def _load_split(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+from src.utils import ensure_dir, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
 
 
 def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
@@ -41,28 +36,6 @@ def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
         cfg["sample"]["ddpm_steps"] = int(preset["ddpm_steps"])
 
     return cfg
-
-
-def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
-    seed = int(split.get("seed", -1))
-    p = float(split.get("low_data_frac", 1.0))
-    subject = split.get("subject", None)
-
-    allowed_seeds = set(int(s) for s in split_cfg.get("seeds", []))
-    allowed_p = [float(x) for x in split_cfg.get("low_data_fracs", [])]
-    allowed_subjects = set(int(s) for s in data_cfg.get("subjects", []))
-
-    if allowed_seeds and seed not in allowed_seeds:
-        return False
-    if allowed_p and not any(abs(p - ap) < 1e-12 for ap in allowed_p):
-        return False
-    if subject is not None and allowed_subjects:
-        try:
-            if int(subject) not in allowed_subjects:
-                return False
-        except Exception:
-            return False
-    return True
 
 
 def _sha256_file(path: Path) -> str:
@@ -84,19 +57,16 @@ def _stable_sampling_seed(
     gen_model: str,
     stage: str,
 ) -> int:
-    payload = json.dumps(
-        {
+    return stable_hash_seed(
+        base_seed=base_seed,
+        payload={
             "split": str(split_stem),
             "subject": str(subject),
             "p": float(p),
             "gen_model": str(gen_model),
             "stage": str(stage),
         },
-        sort_keys=True,
-        ensure_ascii=True,
     )
-    digest = int(hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8], 16)
-    return int((int(base_seed) + digest) % (2**32 - 1))
 
 
 def _active_ratio_list(sweep_cfg: dict) -> list[float]:
@@ -167,8 +137,8 @@ def main() -> None:
         run_cfg = _build_gen_cfg(gen_cfg, gen_model=gen_model, sweep_cfg=sweep_cfg)
 
         for sf in split_files:
-            split = _load_split(sf)
-            if not _in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
+            split = load_json(sf)
+            if not in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
                 continue
             seed = int(split["seed"])
             subject = split.get("subject", "all")

@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
-import json
 import sys
 from pathlib import Path
 
@@ -14,12 +12,7 @@ sys.path.append(str(ROOT))
 from src.dataio import load_processed_index
 from src.models_gen import normalize_generator_type
 from src.train_gen import train_generative_model
-from src.utils import load_yaml, make_exp_id, set_seed
-
-
-def _load_split(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+from src.utils import in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
 
 
 def _build_gen_cfg(
@@ -52,28 +45,6 @@ def _build_gen_cfg(
     return cfg
 
 
-def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
-    seed = int(split.get("seed", -1))
-    p = float(split.get("low_data_frac", 1.0))
-    subject = split.get("subject", None)
-
-    allowed_seeds = set(int(s) for s in split_cfg.get("seeds", []))
-    allowed_p = [float(x) for x in split_cfg.get("low_data_fracs", [])]
-    allowed_subjects = set(int(s) for s in data_cfg.get("subjects", []))
-
-    if allowed_seeds and seed not in allowed_seeds:
-        return False
-    if allowed_p and not any(abs(p - ap) < 1e-12 for ap in allowed_p):
-        return False
-    if subject is not None and allowed_subjects:
-        try:
-            if int(subject) not in allowed_subjects:
-                return False
-        except Exception:
-            return False
-    return True
-
-
 def _stable_gen_seed(
     base_seed: int,
     split_stem: str,
@@ -81,18 +52,15 @@ def _stable_gen_seed(
     p: float,
     gen_model: str,
 ) -> int:
-    payload = json.dumps(
-        {
+    return stable_hash_seed(
+        base_seed=base_seed,
+        payload={
             "split": str(split_stem),
             "subject": str(subject),
             "p": float(p),
             "gen_model": str(gen_model),
         },
-        sort_keys=True,
-        ensure_ascii=True,
     )
-    digest = int(hashlib.sha256(payload.encode("utf-8")).hexdigest()[:8], 16)
-    return int((int(base_seed) + digest) % (2**32 - 1))
 
 
 def _parse_args() -> argparse.Namespace:
@@ -141,8 +109,8 @@ def main() -> None:
         )
 
         for sf in split_files:
-            split = _load_split(sf)
-            if not _in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
+            split = load_json(sf)
+            if not in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
                 continue
             seed_base = int(split["seed"])
 

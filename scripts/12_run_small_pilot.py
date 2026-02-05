@@ -19,12 +19,7 @@ from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
 from src.train_clf import train_classifier
 from src.train_gen import train_generative_model
-from src.utils import ensure_dir, load_yaml, set_seed
-
-
-def _load_split(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+from src.utils import ensure_dir, load_json, load_yaml, set_seed
 
 
 def _p_tag(p: float) -> str:
@@ -58,7 +53,7 @@ def main() -> None:
     if not split_path.exists():
         raise FileNotFoundError(f"Split not found: {split_path}. Run scripts/01_make_splits.py first.")
 
-    split = _load_split(split_path)
+    split = load_json(split_path)
     index_df = load_processed_index(ROOT / data_cfg["index_path"])
 
     gen_model = normalize_generator_type(str(args.gen_model))

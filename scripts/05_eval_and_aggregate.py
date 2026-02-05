@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
@@ -16,7 +14,7 @@ sys.path.append(str(ROOT))
 from src.aggregate import aggregate_metrics
 from src.dataio import load_processed_index, load_samples_by_ids
 from src.distribution import FrozenEEGNetEmbedder, classwise_distance_summary
-from src.utils import load_yaml
+from src.utils import load_json, load_yaml, resolve_device
 
 
 def _load_split_obj(split_file: str | Path, split_name: str) -> dict:
@@ -25,8 +23,7 @@ def _load_split_obj(split_file: str | Path, split_name: str) -> dict:
         p = ROOT / "data/splits" / f"{split_name}.json"
     if not p.exists():
         raise FileNotFoundError(f"Split json not found: {split_file} / {p}")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_json(p)
 
 
 def _resolve_baseline_ckpts(df: pd.DataFrame, baseline_model: str) -> dict[str, Path]:
@@ -72,11 +69,7 @@ def _attach_distribution_distance(df: pd.DataFrame) -> pd.DataFrame:
     embedder_cache: dict[str, FrozenEEGNetEmbedder] = {}
     real_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
-    emb_device = str(emb_cfg.get("device", "auto"))
-    if emb_device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        device = emb_device
+    device = str(resolve_device(emb_cfg.get("device", "auto")))
 
     for i, row in out.iterrows():
         ratio = float(row.get("ratio", 0.0))

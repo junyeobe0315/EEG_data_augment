@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
 import sys
 from pathlib import Path
 
@@ -15,12 +14,7 @@ sys.path.append(str(ROOT))
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, load_yaml, set_seed
-
-
-def _load_split(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+from src.utils import ensure_dir, load_json, load_yaml, set_seed
 
 
 def _apply_paper_preset(cfg: dict, model_type: str, epoch_cap: int | None) -> dict:
@@ -60,7 +54,7 @@ def main() -> None:
     if not split_path.exists():
         raise FileNotFoundError(f"Missing split file: {split_path}")
 
-    split = _load_split(split_path)
+    split = load_json(split_path)
     index_df = load_processed_index(data_cfg["index_path"])
     set_seed(int(args.seed))
 

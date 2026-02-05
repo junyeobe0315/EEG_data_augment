@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import sys
 from pathlib import Path
 
@@ -14,12 +13,7 @@ sys.path.append(str(ROOT))
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, load_yaml, set_seed
-
-
-def _load_split(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+from src.utils import ensure_dir, load_json, load_yaml, set_seed
 
 
 def main() -> None:
@@ -44,7 +38,7 @@ def main() -> None:
 
     rows = []
     for sf in split_files:
-        split = _load_split(sf)
+        split = load_json(sf)
         subject = int(split["subject"])
         seed = int(split["seed"])
         set_seed(seed)

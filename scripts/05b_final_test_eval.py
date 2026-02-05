@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -13,7 +12,7 @@ sys.path.append(str(ROOT))
 
 from src.dataio import load_processed_index
 from src.eval import evaluate_saved_classifier
-from src.utils import load_yaml
+from src.utils import load_json, load_yaml
 
 
 def _load_split(path_like: str, split_name: str) -> dict:
@@ -22,8 +21,7 @@ def _load_split(path_like: str, split_name: str) -> dict:
         p = ROOT / "data/splits" / f"{split_name}.json"
     if not p.exists():
         raise FileNotFoundError(f"Split not found: {path_like} / {p}")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_json(p)
 
 
 def main() -> None:

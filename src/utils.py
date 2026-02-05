@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -14,6 +15,11 @@ import yaml
 def load_yaml(path: str | Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def load_json(path: str | Path) -> Any:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -67,6 +73,34 @@ def proportional_allocation(counts: np.ndarray, total: int) -> np.ndarray:
         order = np.argsort(-frac)
         base[order[:remain]] += 1
     return base.astype(np.int64)
+
+
+def stable_hash_seed(base_seed: int, payload: Dict[str, Any], digest_len: int = 8) -> int:
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=True)
+    digest = int(hashlib.sha256(blob.encode("utf-8")).hexdigest()[:digest_len], 16)
+    return int((int(base_seed) + digest) % (2**32 - 1))
+
+
+def in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
+    seed = int(split.get("seed", -1))
+    p = float(split.get("low_data_frac", 1.0))
+    subject = split.get("subject", None)
+
+    allowed_seeds = set(int(s) for s in split_cfg.get("seeds", []))
+    allowed_p = [float(x) for x in split_cfg.get("low_data_fracs", [])]
+    allowed_subjects = set(int(s) for s in data_cfg.get("subjects", []))
+
+    if allowed_seeds and seed not in allowed_seeds:
+        return False
+    if allowed_p and not any(abs(p - ap) < 1e-12 for ap in allowed_p):
+        return False
+    if subject is not None and allowed_subjects:
+        try:
+            if int(subject) not in allowed_subjects:
+                return False
+        except Exception:
+            return False
+    return True
 
 
 def build_ckpt_payload(
