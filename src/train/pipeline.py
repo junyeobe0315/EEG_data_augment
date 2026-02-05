@@ -17,6 +17,7 @@ from src.data.dataset import load_index, load_samples
 from src.data.normalize import ZScoreNormalizer
 from src.data.subsample import load_split_indices
 from src.eval.distance import classwise_distance_summary
+from src.eval.metrics import compute_metrics
 from src.eval.embedding import FrozenEEGNetEmbedder, train_embedding_eegnet
 from src.qc.qc_pipeline import fit_qc
 from src.train.train_classifier import train_classifier
@@ -111,6 +112,7 @@ def run_experiment(
     run_root: str | Path = "./artifacts/runs",
     stage: str = "full",
     compute_distance: bool = True,
+    alpha_search_cfg: dict | None = None,
 ) -> dict[str, Any]:
     start_time = time.time()
     set_global_seed(seed)
@@ -347,27 +349,98 @@ def run_experiment(
     train_cfg["batch_size"] = _resolve_batch_size(train_cfg, r)
     eval_cfg = model_cfgs[classifier]["evaluation"]
 
-    evaluate_test = stage in {"final_eval", "full"}
-    metrics = train_classifier(
-        x_train=x_train,
-        y_train=y_train,
-        x_val=x_val,
-        y_val=y_val,
-        x_test=x_test,
-        y_test=y_test,
-        model_type=classifier,
-        model_cfg=model_cfg,
-        train_cfg=train_cfg,
-        eval_cfg=eval_cfg,
-        method=method,
-        alpha_ratio=alpha_ratio,
-        num_classes=num_classes,
-        run_dir=run_dir,
-        normalizer_state=normalizer_state,
-        synth_data=synth_data,
-        evaluate_test=evaluate_test,
-        aug_cfg=model_cfgs.get("augment", {}),
+    alpha_search_cfg = alpha_search_cfg or {}
+    proxy_mode = str(alpha_search_cfg.get("proxy_mode", "full"))
+    use_linear_probe = (
+        stage == "alpha_search"
+        and proxy_mode == "linear_probe"
+        and method == "GenAug"
+        and classifier == "eegnet"
     )
+
+    if use_linear_probe:
+        embed_dir = ensure_dir(Path("./artifacts/checkpoints") / f"gen_{_generator_run_id(subject, seed, r, generator, dataset_cfg, preprocess_cfg, gen_cfgs[generator])}" / "embedder_proxy")
+        embed_ckpt = embed_dir / "ckpt.pt"
+        if not embed_ckpt.exists():
+            embed_train_cfg = dict(model_cfgs["eegnet"]["train"])
+            embed_train_cfg["batch_size"] = _resolve_batch_size(embed_train_cfg, r)
+            embed_steps = alpha_search_cfg.get("embed_steps")
+            if embed_steps is not None:
+                embed_train_cfg["step_control"] = {
+                    "enabled": True,
+                    "total_steps": int(embed_steps),
+                    "steps_per_eval": max(1, int(embed_steps) // 3),
+                }
+                embed_train_cfg["epochs"] = 1
+            embed_ckpt = train_embedding_eegnet(
+                x_train=x_train,
+                y_train=y_train,
+                x_val=x_val,
+                y_val=y_val,
+                model_cfg=model_cfgs["eegnet"]["model"],
+                train_cfg=embed_train_cfg,
+                run_dir=embed_dir,
+                normalizer_state=normalizer_state,
+                num_classes=num_classes,
+            )
+
+        embedder = FrozenEEGNetEmbedder(embed_ckpt, device=_resolve_device(model_cfgs["eegnet"]["train"]))
+        train_emb = embedder.transform(x_train)
+        val_emb = embedder.transform(x_val)
+        if synth_data is not None and len(synth_data[0]) > 0:
+            syn_emb = embedder.transform(synth_data[0])
+            x_emb = np.concatenate([train_emb, syn_emb], axis=0)
+            y_emb = np.concatenate([y_train, synth_data[1]], axis=0)
+        else:
+            x_emb = train_emb
+            y_emb = y_train
+
+        from sklearn.linear_model import LogisticRegression
+
+        lp_cfg = alpha_search_cfg.get("linear_probe", {})
+        lr_kwargs = {
+            "max_iter": int(lp_cfg.get("max_iter", 200)),
+            "C": float(lp_cfg.get("C", 1.0)),
+            "solver": str(lp_cfg.get("solver", "lbfgs")),
+        }
+        if "n_jobs" in lp_cfg:
+            lr_kwargs["n_jobs"] = int(lp_cfg.get("n_jobs", 1))
+        clf = LogisticRegression(**lr_kwargs)
+        clf.fit(x_emb, y_emb)
+        pred = clf.predict(val_emb)
+        val_metrics = compute_metrics(y_val, pred)
+        metrics = {
+            "val_acc": val_metrics["acc"],
+            "val_kappa": val_metrics["kappa"],
+            "val_macro_f1": val_metrics["macro_f1"],
+            "acc": np.nan,
+            "kappa": np.nan,
+            "macro_f1": np.nan,
+            "ratio_effective": ratio_effective,
+            "alpha_mix_effective": alpha_mix_effective,
+        }
+    else:
+        evaluate_test = stage in {"final_eval", "full"}
+        metrics = train_classifier(
+            x_train=x_train,
+            y_train=y_train,
+            x_val=x_val,
+            y_val=y_val,
+            x_test=x_test,
+            y_test=y_test,
+            model_type=classifier,
+            model_cfg=model_cfg,
+            train_cfg=train_cfg,
+            eval_cfg=eval_cfg,
+            method=method,
+            alpha_ratio=alpha_ratio,
+            num_classes=num_classes,
+            run_dir=run_dir,
+            normalizer_state=normalizer_state,
+            synth_data=synth_data,
+            evaluate_test=evaluate_test,
+            aug_cfg=model_cfgs.get("augment", {}),
+        )
 
     runtime_sec = float(time.time() - start_time)
     row = {

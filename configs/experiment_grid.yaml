@@ -8,3 +8,12 @@ stage:
   mode: full  # alpha_search | final_eval | full
   screening_classifier: eegnet
   alpha_star_path: ./artifacts/alpha_star.json
+
+alpha_search:
+  proxy_mode: linear_probe  # full | steps | linear_probe
+  embed_steps: 400
+  linear_probe:
+    max_iter: 200
+    C: 1.0
+    solver: lbfgs
+    n_jobs: 1

@@ -68,6 +68,8 @@ def main() -> None:
     if has_primary_key(df, row_key):
         return
 
+    exp_cfg = load_yaml("configs/experiment_grid.yaml", overrides=args.override)
+    alpha_search_cfg = exp_cfg.get("alpha_search", {})
     row = run_experiment(
         subject=args.subject,
         seed=args.seed,
@@ -86,6 +88,7 @@ def main() -> None:
         results_path=args.results,
         stage=args.stage,
         compute_distance=True,
+        alpha_search_cfg=alpha_search_cfg,
     )
     append_result(args.results, row)
 

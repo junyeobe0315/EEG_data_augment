@@ -55,6 +55,7 @@ def main() -> None:
     stage = args.stage or exp_cfg.get("stage", {}).get("mode", "full")
     screening_classifier = exp_cfg.get("stage", {}).get("screening_classifier", "eegnet")
     alpha_star_path = exp_cfg.get("stage", {}).get("alpha_star_path", "./artifacts/alpha_star.json")
+    alpha_search_cfg = exp_cfg.get("alpha_search", {})
 
     methods = exp_cfg.get("methods", [])
     classifiers = exp_cfg.get("classifiers", [])
@@ -112,6 +113,7 @@ def main() -> None:
                                 results_path=args.results,
                                 stage=stage,
                                 compute_distance=compute_distance,
+                                alpha_search_cfg=alpha_search_cfg,
                             )
                             appended = append_result(args.results, row)
                             if appended:
@@ -160,6 +162,7 @@ def main() -> None:
                                         results_path=args.results,
                                         stage=stage,
                                         compute_distance=compute_distance,
+                                        alpha_search_cfg=alpha_search_cfg,
                                     )
                                     appended = append_result(args.results, row)
                                     if appended:
