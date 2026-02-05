@@ -3,7 +3,7 @@ ratio_list: [0.0, 0.25, 0.5, 1.0, 2.0]
 qc_on: [false, true]
 gen_models: [eeggan_net, cwgan_gp, conditional_ddpm, cvae]
 clf_models: [eegnet_tf_faithful, svm, eeg_conformer, ctnet]  # Main track keeps CTNet; ATCNet is handled in paper/official-faithful tracks.
-vram_profile: 6gb
+vram_profile: 15gb
 apply_vram_presets: true
 use_paper_presets: false
 

@@ -54,6 +54,15 @@ vram_presets:
       n_per_class: 180
       ddpm_steps: 80
       diffusion_steps: 240
+  "15gb":
+    cvae:
+      batch_size: 256
+    eeggan_net:
+      batch_size: 128
+    cwgan_gp:
+      batch_size: 64
+    conditional_ddpm:
+      batch_size: 24
 
 train:
   epochs: 50
