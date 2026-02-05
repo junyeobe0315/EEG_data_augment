@@ -13,8 +13,9 @@ def test_normalizer_fit_scope() -> None:
     x_norm = norm.transform(x_train)
     assert np.allclose(x_norm.mean(), 0.0, atol=1e-6)
     x_test_norm = norm.transform(x_test)
-    # If train mean is 1, test should be shifted by -1
-    assert np.allclose(x_test_norm.mean(), -1.0, atol=1e-6)
+    # If train std is 0, z-score uses eps; expected shift is -1/eps.
+    expected = -(1.0 / norm.eps)
+    assert np.allclose(x_test_norm.mean(), expected, atol=1e-6)
 
 
 def test_qc_fit_scope() -> None:
