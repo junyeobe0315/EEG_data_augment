@@ -15,7 +15,7 @@ from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.models_gen import normalize_generator_type
 from src.train_clf import train_classifier
-from src.utils import load_yaml, set_seed
+from src.utils import load_yaml, p_tag, set_seed, split_file_path
 
 
 def _assert(cond: bool, msg: str) -> None:
@@ -93,9 +93,7 @@ def run_smoke() -> None:
     subject = int(data_cfg["subjects"][0])
     seed = int(split_cfg["seeds"][0])
     p = float(split_cfg["low_data_fracs"][0])
-    tag = str(p).replace(".", "p")
-
-    sf = ROOT / "data/splits" / f"subject_{subject:02d}_seed_{seed}_p_{tag}.json"
+    sf = split_file_path(ROOT, subject=subject, seed=seed, p=p)
     with open(sf, "r", encoding="utf-8") as f:
         split = json.load(f)
 

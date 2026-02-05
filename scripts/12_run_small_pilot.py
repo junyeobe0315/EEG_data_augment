@@ -19,11 +19,7 @@ from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
 from src.train_clf import train_classifier
 from src.train_gen import train_generative_model
-from src.utils import ensure_dir, load_json, load_yaml, set_seed
-
-
-def _p_tag(p: float) -> str:
-    return str(float(p)).replace(".", "p")
+from src.utils import ensure_dir, load_json, load_yaml, p_tag, set_seed, split_file_path
 
 
 def main() -> None:
@@ -49,7 +45,7 @@ def main() -> None:
     clf_cfg = load_yaml(ROOT / "configs/clf.yaml")
     qc_cfg = load_yaml(ROOT / "configs/qc.yaml")
 
-    split_path = ROOT / "data/splits" / f"subject_{int(args.subject):02d}_seed_{int(args.seed)}_p_{_p_tag(args.p)}.json"
+    split_path = split_file_path(ROOT, subject=int(args.subject), seed=int(args.seed), p=float(args.p))
     if not split_path.exists():
         raise FileNotFoundError(f"Split not found: {split_path}. Run scripts/01_make_splits.py first.")
 
@@ -60,7 +56,7 @@ def main() -> None:
     clf_model = normalize_classifier_type(str(args.clf_model))
 
     tag = f"__{args.tag}" if str(args.tag).strip() else ""
-    pilot_id = f"pilot__subj-{int(args.subject):02d}__seed-{int(args.seed)}__p-{_p_tag(args.p)}__gen-{gen_model}__clf-{clf_model}__r-{args.ratio}{tag}"
+    pilot_id = f"pilot__subj-{int(args.subject):02d}__seed-{int(args.seed)}__p-{p_tag(args.p)}__gen-{gen_model}__clf-{clf_model}__r-{args.ratio}{tag}"
 
     # 1) Train generator (lightweight settings)
     gen_run_cfg = copy.deepcopy(gen_cfg)

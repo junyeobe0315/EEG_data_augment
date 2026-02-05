@@ -116,6 +116,15 @@ def find_split_files(root: str | Path, split_cfg: dict) -> list[Path]:
     return []
 
 
+def p_tag(value: float) -> str:
+    return str(float(value)).replace(".", "p")
+
+
+def split_file_path(root: str | Path, subject: int, seed: int, p: float) -> Path:
+    split_dir = Path(root) / "data" / "splits"
+    return split_dir / f"subject_{int(subject):02d}_seed_{int(seed)}_p_{p_tag(p)}.json"
+
+
 def build_ckpt_payload(
     norm: Any,
     shape: Dict[str, int],

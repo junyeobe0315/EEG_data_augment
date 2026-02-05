@@ -13,7 +13,7 @@ ROOT = project_root(__file__)
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, load_json, load_yaml, set_seed
+from src.utils import ensure_dir, load_json, load_yaml, p_tag, set_seed
 
 
 def main() -> None:
@@ -31,7 +31,7 @@ def main() -> None:
     index_df = load_processed_index(data_cfg["index_path"])
     out_dir = ensure_dir(ROOT / "results/metrics")
 
-    tag = str(p_target).replace(".", "p")
+    tag = p_tag(p_target)
     split_files = sorted((ROOT / "data/splits").glob(f"subject_*_seed_*_p_{tag}.json"))
     if not split_files:
         raise RuntimeError(f"No split files for p={p_target}. Run scripts/01_make_splits.py first.")
