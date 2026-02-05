@@ -1,27 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_pipeline_lib.sh"
+ROOT="$(pipeline_repo_root)"
 cd "${ROOT}"
 
 echo "[step1] create required directories"
-mkdir -p \
-  data/raw \
-  data/raw/true_labels \
-  data/processed \
-  data/splits \
-  runs/gen \
-  runs/synth \
-  runs/synth_qc \
-  runs/clf \
-  results/metrics \
-  results/tables \
-  results/figures
+ensure_common_dirs
+ensure_dirs data/raw/true_labels
 
-if [[ -d "${ROOT}/BCICIV_2a_gdf" && ! -e "${ROOT}/data/raw/BCICIV_2a_gdf" ]]; then
-  ln -s "${ROOT}/BCICIV_2a_gdf" "${ROOT}/data/raw/BCICIV_2a_gdf"
-  echo "[ok] symlinked dataset -> data/raw/BCICIV_2a_gdf"
-fi
+ensure_dataset_link "${ROOT}"
 
 echo "[step2] install packages and python venv"
 if command -v apt-get >/dev/null 2>&1; then
@@ -51,9 +40,10 @@ if [[ "${found}" -eq 0 ]]; then
 fi
 
 echo "[step4] prepare pipeline (data -> splits -> validation)"
-python scripts/00_prepare_data.py
-python scripts/01_make_splits.py
-python scripts/11_validate_pipeline.py
+resolve_python
+"${PY[@]}" scripts/00_prepare_data.py
+"${PY[@]}" scripts/01_make_splits.py
+"${PY[@]}" scripts/11_validate_pipeline.py
 
 echo "[step5] launch tmux sessions"
 BATCHES=(256 512 1024)

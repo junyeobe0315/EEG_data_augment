@@ -3,27 +3,13 @@ set -euo pipefail
 export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
 export JOBLIB_TEMP_FOLDER="${JOBLIB_TEMP_FOLDER:-/tmp}"
 
-die() {
-  echo "[error] $*" >&2
-  exit 1
-}
-
-ensure_dir() {
-  mkdir -p "$1"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_pipeline_lib.sh"
+ROOT="$(pipeline_repo_root)"
+cd "${ROOT}"
 
 # Optional: CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
-if [[ -n "${CONDA_ENV:-}" ]]; then
-  PY=("conda" "run" "-n" "${CONDA_ENV}" "--no-capture-output" "python")
-else
-  if command -v python >/dev/null 2>&1; then
-    PY=("python")
-  elif command -v python3 >/dev/null 2>&1; then
-    PY=("python3")
-  else
-    die "python/python3 not found. Install python or set CONDA_ENV."
-  fi
-fi
+resolve_python
 echo "[info] Using python: ${PY[*]}"
 
 GEN_BATCH=""
@@ -62,22 +48,10 @@ if [[ -n "${CLF_BATCH}" ]]; then
   CLF_ARGS+=(--batch-size "${CLF_BATCH}")
 fi
 
-ensure_dir data/raw
-ensure_dir data/processed
-ensure_dir data/splits
-ensure_dir runs/gen
-ensure_dir runs/synth
-ensure_dir runs/synth_qc
-ensure_dir runs/clf
-ensure_dir results/metrics
-ensure_dir results/tables
-ensure_dir results/figures
+ensure_common_dirs
 
 RAW_DIR="data/raw/BCICIV_2a_gdf"
-if [[ ! -d "${RAW_DIR}" && -d "./BCICIV_2a_gdf" ]]; then
-  ln -s "$(pwd)/BCICIV_2a_gdf" "${RAW_DIR}"
-  echo "[info] symlinked dataset -> ${RAW_DIR}"
-fi
+ensure_dataset_link "${ROOT}"
 if [[ ! -d "${RAW_DIR}" ]]; then
   die "dataset not found at ${RAW_DIR}. Place BCICIV_2a_gdf under data/raw or project root."
 fi
