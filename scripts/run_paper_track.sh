@@ -18,8 +18,8 @@ EPOCH_CAP="${EPOCH_CAP:-0}"
 
 resolve_python
 
-"${PY[@]}" scripts/08_prepare_paper_track_data.py
-"${PY[@]}" scripts/09_run_paper_track.py \
+"${PY[@]}" main.py prepare-paper-track-data
+"${PY[@]}" main.py paper-track \
   --models "${MODELS}" \
   --subjects "${SUBJECTS}" \
   --seed "${SEED}" \

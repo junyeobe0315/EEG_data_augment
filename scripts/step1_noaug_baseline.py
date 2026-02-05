@@ -34,7 +34,7 @@ def main() -> None:
     tag = p_tag(p_target)
     split_files = sorted((ROOT / "data/splits").glob(f"subject_*_seed_*_p_{tag}.json"))
     if not split_files:
-        raise RuntimeError(f"No split files for p={p_target}. Run scripts/01_make_splits.py first.")
+        raise RuntimeError(f"No split files for p={p_target}. Run `python main.py make-splits` first.")
 
     rows = []
     for sf in split_files:

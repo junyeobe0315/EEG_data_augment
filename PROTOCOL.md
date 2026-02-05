@@ -101,16 +101,16 @@ Minimum report set:
 
 ## 11) Commands
 ```bash
-# Main 00-05
+# Main pipeline
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 
 # Final test-only pass
-conda run -n EEG --no-capture-output python scripts/05b_final_test_eval.py \
+conda run -n EEG --no-capture-output python main.py final-test \
   --input-csv results/metrics/clf_cross_session.csv \
   --output-csv results/metrics/clf_cross_session_test.csv
 
 # Aggregate/figures
-conda run -n EEG --no-capture-output python scripts/05_eval_and_aggregate.py \
+conda run -n EEG --no-capture-output python main.py eval-aggregate \
   --metrics-file clf_cross_session_test.csv
 ```
 

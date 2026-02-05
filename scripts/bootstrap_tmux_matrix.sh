@@ -41,9 +41,9 @@ fi
 
 echo "[step4] prepare pipeline (data -> splits -> validation)"
 resolve_python
-"${PY[@]}" scripts/00_prepare_data.py
-"${PY[@]}" scripts/01_make_splits.py
-"${PY[@]}" scripts/11_validate_pipeline.py
+"${PY[@]}" main.py prepare-data
+"${PY[@]}" main.py make-splits
+"${PY[@]}" main.py validate
 
 echo "[step5] launch tmux sessions"
 BATCHES=(256 512 1024)

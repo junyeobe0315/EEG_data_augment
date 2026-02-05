@@ -17,7 +17,7 @@ CONFIG_PATH="${CONFIG_PATH:-configs/official_faithful.yaml}"
 
 resolve_python
 
-ARGS=(scripts/10_run_official_faithful_track.py --config "${CONFIG_PATH}" --seed "${SEED}")
+ARGS=(main.py official-faithful --config "${CONFIG_PATH}" --seed "${SEED}")
 if [[ -n "${TAG}" ]]; then
   ARGS+=(--tag "${TAG}")
 fi

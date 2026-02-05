@@ -141,7 +141,7 @@ def main() -> None:
     metrics_name = args.metrics_file or f"clf_{split_cfg['protocol']}.csv"
     metrics_csv = ROOT / "results/metrics" / metrics_name
     if not metrics_csv.exists():
-        raise FileNotFoundError(f"Metrics file not found: {metrics_csv}. Run scripts/04_train_clf.py first.")
+        raise FileNotFoundError(f"Metrics file not found: {metrics_csv}. Run `python main.py train-clf` first.")
 
     df = pd.read_csv(metrics_csv)
     df = _attach_distribution_distance(df)

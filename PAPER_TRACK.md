@@ -9,9 +9,9 @@ Use it for **paper/repo comparability**, not for final leakage-safe augmentation
 - Keep differences from the main protocol explicit and auditable.
 
 ## Entry Points
-- `scripts/08_prepare_paper_track_data.py`
-- `scripts/09_run_paper_track.py`
-- `scripts/10_run_official_faithful_track.py`
+- `main.py prepare-paper-track-data`
+- `main.py paper-track`
+- `main.py official-faithful`
 - `configs/paper_track.yaml`
 - `configs/official_faithful.yaml`
 
@@ -29,12 +29,12 @@ Generated files:
 
 ### 1) Build paper-track data
 ```bash
-conda run -n EEG --no-capture-output python scripts/08_prepare_paper_track_data.py
+conda run -n EEG --no-capture-output python main.py prepare-paper-track-data
 ```
 
 ### 2) Run paper track
 ```bash
-conda run -n EEG --no-capture-output python scripts/09_run_paper_track.py \
+conda run -n EEG --no-capture-output python main.py paper-track \
   --models eegnet,svm,eeg_conformer,ctnet \
   --subjects 1,2,3,4,5,6,7,8,9 \
   --seed 0
@@ -42,12 +42,12 @@ conda run -n EEG --no-capture-output python scripts/09_run_paper_track.py \
 
 ### 3) Official-faithful acceptance run
 ```bash
-conda run -n EEG --no-capture-output python scripts/10_run_official_faithful_track.py --seed 0
+conda run -n EEG --no-capture-output python main.py official-faithful --seed 0
 ```
 
 ### 4) Fast debug
 ```bash
-conda run -n EEG --no-capture-output python scripts/09_run_paper_track.py \
+conda run -n EEG --no-capture-output python main.py paper-track \
   --models eegnet,svm,eeg_conformer,ctnet \
   --subjects 1 \
   --seed 0 \

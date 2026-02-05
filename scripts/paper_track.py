@@ -80,7 +80,7 @@ def main() -> None:
         track_name = paper_cfg["model_track_map"][model_type]
         index_path = ROOT / "data/paper_track" / track_name / "index.csv"
         if not index_path.exists():
-            raise FileNotFoundError(f"Missing paper-track index: {index_path}. Run scripts/08_prepare_paper_track_data.py first.")
+            raise FileNotFoundError(f"Missing paper-track index: {index_path}. Run `python main.py prepare-paper-track-data` first.")
         index_df = load_processed_index(index_path)
 
         val_ratio = float(paper_cfg["model_val_ratio"].get(model_type, 0.2))

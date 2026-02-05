@@ -46,7 +46,7 @@ def main() -> None:
 
     split_path = split_file_path(ROOT, subject=int(args.subject), seed=int(args.seed), p=float(args.p))
     if not split_path.exists():
-        raise FileNotFoundError(f"Split not found: {split_path}. Run scripts/01_make_splits.py first.")
+        raise FileNotFoundError(f"Split not found: {split_path}. Run `python main.py make-splits` first.")
 
     split = load_json(split_path)
     index_df = load_processed_index(ROOT / data_cfg["index_path"])

@@ -126,7 +126,7 @@ def find_split_files(root: str | Path, split_cfg: dict) -> list[Path]:
 def require_split_files(root: str | Path, split_cfg: dict) -> list[Path]:
     files = find_split_files(root, split_cfg)
     if not files:
-        raise RuntimeError("No split files found. Run scripts/01_make_splits.py first.")
+        raise RuntimeError("No split files found. Run `python main.py make-splits` first.")
     return files
 
 

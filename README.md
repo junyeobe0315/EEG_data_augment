@@ -50,7 +50,7 @@ See `PROTOCOL.md` and `PAPER_TRACK.md` for details.
 ## 5) Repository Layout
 ```text
 configs/    # YAML configs
-scripts/    # entry scripts (00~05 + helpers)
+scripts/    # CLI helpers (imported by main.py)
 src/        # core modules
 runs/       # checkpoints/logs/synthetic artifacts (gitignored)
 results/    # metrics/tables/figures (gitignored)
@@ -65,31 +65,31 @@ pip install -r requirements.txt
 
 ## 7) Minimal Command Flow
 
-### A. Main pipeline (00~05)
+### A. Main pipeline
 ```bash
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 ```
 
 ### B. Final test-only evaluation (after selecting configs on `T_val`)
 ```bash
-conda run -n EEG --no-capture-output python scripts/05b_final_test_eval.py \
+conda run -n EEG --no-capture-output python main.py final-test \
   --input-csv results/metrics/clf_cross_session.csv \
   --output-csv results/metrics/clf_cross_session_test.csv
 
-conda run -n EEG --no-capture-output python scripts/05_eval_and_aggregate.py \
+conda run -n EEG --no-capture-output python main.py eval-aggregate \
   --metrics-file clf_cross_session_test.csv
 ```
 
 ### C. Sanity checks
 ```bash
 # Config/split integrity check
-conda run -n EEG --no-capture-output python scripts/11_validate_pipeline.py
+conda run -n EEG --no-capture-output python main.py validate
 
 # Tiny smoke train
-conda run -n EEG --no-capture-output python scripts/11_validate_pipeline.py --smoke
+conda run -n EEG --no-capture-output python main.py validate --smoke
 
 # One-shot quick pilot (gen + qc + baseline/genaug)
-conda run -n EEG --no-capture-output python scripts/12_run_small_pilot.py \
+conda run -n EEG --no-capture-output python main.py pilot \
   --subject 1 --seed 0 --p 0.20 \
   --gen-model cvae --clf-model eegnet_tf_faithful \
   --ratio 0.5 --qc-on --gen-epochs 3 --clf-steps 200
@@ -103,7 +103,7 @@ CONDA_ENV=EEG ./scripts/run_official_faithful.sh
 
 ## 8) Useful `.sh` Entry Scripts
 - `scripts/run_main_pipeline.sh`
-  - runs `00_prepare_data -> 01_make_splits -> 02_train_gen -> 03_sample_and_qc -> 04_train_clf -> 05_eval_and_aggregate`
+  - runs `main.py pipeline`
 - `scripts/run_one.sh`
   - alias to `run_main_pipeline.sh`
 - `scripts/run_paper_track.sh`
@@ -148,11 +148,11 @@ CONDA_ENV=EEG ./scripts/run_official_faithful.sh
 ```bash
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 
-conda run -n EEG --no-capture-output python scripts/05b_final_test_eval.py \
+conda run -n EEG --no-capture-output python main.py final-test \
   --input-csv results/metrics/clf_cross_session.csv \
   --output-csv results/metrics/clf_cross_session_test.csv
 
-conda run -n EEG --no-capture-output python scripts/05_eval_and_aggregate.py \
+conda run -n EEG --no-capture-output python main.py eval-aggregate \
   --metrics-file clf_cross_session_test.csv
 ```
 
