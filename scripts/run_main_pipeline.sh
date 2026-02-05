@@ -13,8 +13,12 @@ echo "[info] Using python: ${PY[*]}"
 
 GEN_BATCH=""
 CLF_BATCH=""
+STEPS=""
+SKIP=""
 FORCE=0
 FAST=0
+DRY_RUN=0
+PRINT_STEPS=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gen_batch|--gen-batch)
@@ -31,6 +35,30 @@ while [[ $# -gt 0 ]]; do
       ;;
     --clf_batch=*|--clf-batch=*)
       CLF_BATCH="${1#*=}"
+      shift 1
+      ;;
+    --steps)
+      STEPS="$2"
+      shift 2
+      ;;
+    --steps=*)
+      STEPS="${1#*=}"
+      shift 1
+      ;;
+    --skip)
+      SKIP="$2"
+      shift 2
+      ;;
+    --skip=*)
+      SKIP="${1#*=}"
+      shift 1
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift 1
+      ;;
+    --print-steps)
+      PRINT_STEPS=1
       shift 1
       ;;
     --force)
@@ -60,6 +88,18 @@ if [[ -n "${CLF_BATCH}" ]]; then
   CLF_ARGS+=(--batch-size "${CLF_BATCH}")
   PIPE_ARGS+=(--clf-batch "${CLF_BATCH}")
 fi
+if [[ -n "${STEPS}" ]]; then
+  PIPE_ARGS+=(--steps "${STEPS}")
+fi
+if [[ -n "${SKIP}" ]]; then
+  PIPE_ARGS+=(--skip "${SKIP}")
+fi
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  PIPE_ARGS+=(--dry-run)
+fi
+if [[ "${PRINT_STEPS}" -eq 1 ]]; then
+  PIPE_ARGS+=(--print-steps)
+fi
 if [[ "${FORCE}" -eq 1 ]]; then
   GEN_ARGS+=(--force)
   CLF_ARGS+=(--force)
@@ -82,7 +122,9 @@ fi
 
 "${PY[@]}" main.py pipeline "${PIPE_ARGS[@]}"
 
-echo "[info] Main sweep finished with evaluate_test=false by default."
-echo "[info] For final test-only evaluation, run:"
-echo "       ${PY[*]} main.py final-test --input-csv results/metrics/clf_cross_session.csv --output-csv results/metrics/clf_cross_session_test.csv"
-echo "       ${PY[*]} main.py eval-aggregate --metrics-file clf_cross_session_test.csv"
+if [[ "${DRY_RUN}" -eq 0 ]]; then
+  echo "[info] Main sweep finished with evaluate_test=false by default."
+  echo "[info] For final test-only evaluation, run:"
+  echo "       ${PY[*]} main.py final-test --input-csv results/metrics/clf_cross_session.csv --output-csv results/metrics/clf_cross_session_test.csv"
+  echo "       ${PY[*]} main.py eval-aggregate --metrics-file clf_cross_session_test.csv"
+fi

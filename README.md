@@ -71,6 +71,15 @@ CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 
 # Speed-optimized (AMP/TF32/pin_memory) on GPU
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --fast
+
+# Run a subset of steps
+CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --steps train-gen,sample-qc,train-clf
+
+# Skip a step
+CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --skip eval-aggregate
+
+# Print resolved steps only
+CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --print-steps
 ```
 
 ### B. Final test-only evaluation (after selecting configs on `T_val`)
