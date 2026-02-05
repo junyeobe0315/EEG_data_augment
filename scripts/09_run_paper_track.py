@@ -4,14 +4,14 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import sys
 from pathlib import Path
+
+from _script_utils import project_root
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type

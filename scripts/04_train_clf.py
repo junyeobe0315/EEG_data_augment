@@ -3,19 +3,19 @@ from __future__ import annotations
 
 import argparse
 import copy
-import sys
 from pathlib import Path
+
+from _script_utils import project_root
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.models_gen import normalize_generator_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
+from src.utils import ensure_dir, find_split_files, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
 
 
 def _build_clf_cfg(
@@ -164,9 +164,7 @@ def main() -> None:
     index_df = load_processed_index(data_cfg["index_path"])
     metric_dir = ensure_dir(ROOT / "results/metrics")
 
-    split_files = sorted((ROOT / "data/splits").glob("subject_*_seed_*_p_*.json"))
-    if not split_files:
-        split_files = sorted((ROOT / "data/splits").glob(f"split_{split_cfg['protocol']}_seed*.json"))
+    split_files = find_split_files(ROOT, split_cfg)
 
     rows = []
     for sf in split_files:

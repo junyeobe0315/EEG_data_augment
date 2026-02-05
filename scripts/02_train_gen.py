@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import argparse
 import copy
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+from _script_utils import project_root
+
+ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index
 from src.models_gen import normalize_generator_type
 from src.train_gen import train_generative_model
-from src.utils import in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
+from src.utils import find_split_files, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
 
 
 def _build_gen_cfg(
@@ -93,10 +93,7 @@ def main() -> None:
     index_df = load_processed_index(data_cfg["index_path"])
 
     # New protocol: subject/seed/p split files.
-    split_files = sorted((ROOT / "data/splits").glob("subject_*_seed_*_p_*.json"))
-    if not split_files:
-        # Backward compatibility
-        split_files = sorted((ROOT / "data/splits").glob(f"split_{split_cfg['protocol']}_seed*.json"))
+    split_files = find_split_files(ROOT, split_cfg)
     if not split_files:
         raise RuntimeError("No split files found. Run scripts/01_make_splits.py first.")
 

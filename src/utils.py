@@ -103,6 +103,19 @@ def in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
     return True
 
 
+def find_split_files(root: str | Path, split_cfg: dict) -> list[Path]:
+    split_dir = Path(root) / "data" / "splits"
+    files = sorted(split_dir.glob("subject_*_seed_*_p_*.json"))
+    if files:
+        return files
+    protocol = str(split_cfg.get("protocol", "")).strip()
+    if protocol:
+        legacy = sorted(split_dir.glob(f"split_{protocol}_seed*.json"))
+        if legacy:
+            return legacy
+    return []
+
+
 def build_ckpt_payload(
     norm: Any,
     shape: Dict[str, int],

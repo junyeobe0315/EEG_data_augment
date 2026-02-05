@@ -4,20 +4,20 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import sys
 from pathlib import Path
+
+from _script_utils import project_root
 
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index, load_samples_by_ids
 from src.models_gen import normalize_generator_type
 from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
-from src.utils import ensure_dir, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
+from src.utils import ensure_dir, find_split_files, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
 
 
 def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
@@ -128,9 +128,7 @@ def main() -> None:
     qc_dir = ensure_dir(ROOT / "runs/synth_qc")
     metric_dir = ensure_dir(ROOT / "results/metrics")
 
-    split_files = sorted((ROOT / "data/splits").glob("subject_*_seed_*_p_*.json"))
-    if not split_files:
-        split_files = sorted((ROOT / "data/splits").glob(f"split_{split_cfg['protocol']}_seed*.json"))
+    split_files = find_split_files(ROOT, split_cfg)
 
     reports = []
     for gen_model in gen_models:

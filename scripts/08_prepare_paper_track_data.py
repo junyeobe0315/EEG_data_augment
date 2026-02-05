@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+
+from _script_utils import project_root
 
 import mne
 import numpy as np
 import pandas as pd
 from scipy.signal import cheby2, sosfiltfilt
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+ROOT = project_root(__file__)
 
 from src.dataio import load_true_labels, parse_subject_session
 from src.utils import ensure_dir, load_yaml
@@ -265,4 +265,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

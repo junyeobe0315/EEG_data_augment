@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+
+from _script_utils import project_root
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
+ROOT = project_root(__file__)
 
 from src.dataio import load_bci2a_trials, load_true_labels, parse_subject_session
 from src.utils import ensure_dir, load_yaml
