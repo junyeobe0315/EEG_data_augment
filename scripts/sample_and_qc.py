@@ -5,7 +5,10 @@ import argparse
 import hashlib
 from pathlib import Path
 
-from _script_utils import project_root
+try:
+    from scripts._script_utils import project_root
+except ImportError:  # pragma: no cover - direct script execution
+    from _script_utils import project_root
 
 import numpy as np
 import pandas as pd

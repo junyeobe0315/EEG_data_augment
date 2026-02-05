@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _script_utils import project_root
+try:
+    from scripts._script_utils import project_root
+except ImportError:  # pragma: no cover - direct script execution
+    from _script_utils import project_root
 
 import numpy as np
 from sklearn.model_selection import train_test_split

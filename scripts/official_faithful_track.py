@@ -5,7 +5,10 @@ import argparse
 import json
 from pathlib import Path
 
-from _script_utils import project_root
+try:
+    from scripts._script_utils import project_root
+except ImportError:  # pragma: no cover - direct script execution
+    from _script_utils import project_root
 
 import pandas as pd
 from sklearn.model_selection import train_test_split

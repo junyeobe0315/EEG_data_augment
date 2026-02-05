@@ -4,7 +4,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _script_utils import project_root
+try:
+    from scripts._script_utils import project_root
+except ImportError:  # pragma: no cover - direct script execution
+    from _script_utils import project_root
 
 from src.utils import load_yaml, make_exp_id, parse_p_tag
 
