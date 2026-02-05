@@ -126,7 +126,7 @@ def main() -> None:
                 seed=seed_base,
                 p=p,
                 split=sf.stem,
-                gmodel=gen_model,
+                gen=gen_model,
             )
             out_dir = ROOT / "runs/gen" / exp_id
             run_cfg.setdefault("data", {})["sfreq"] = int(data_cfg.get("sfreq", 250))

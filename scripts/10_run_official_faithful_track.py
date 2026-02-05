@@ -14,7 +14,7 @@ ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index
 from src.train_official_faithful import train_faithful_classifier
-from src.utils import ensure_dir, load_yaml, set_seed
+from src.utils import ensure_dir, load_yaml, make_exp_id, set_seed
 
 
 def _make_split(index_df: pd.DataFrame, subject: int, val_ratio: float, split_seed: int, stratify: bool) -> dict:
@@ -70,7 +70,13 @@ def main() -> None:
                 split_seed=int(cfg["split"]["split_seed"]),
                 stratify=bool(cfg["split"]["stratify"]),
             )
-            run_dir = ROOT / "runs/clf" / f"official_faithful__model-{model_key}__subj-{int(subject):02d}__seed-{int(args.seed)}"
+            run_id = make_exp_id(
+                "official_faithful",
+                subject=int(subject),
+                seed=int(args.seed),
+                clf=model_key,
+            )
+            run_dir = ROOT / "runs/clf" / run_id
             m = train_faithful_classifier(
                 split=split,
                 index_df=idx,

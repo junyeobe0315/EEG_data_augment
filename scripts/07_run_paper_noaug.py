@@ -14,7 +14,7 @@ ROOT = project_root(__file__)
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, load_json, load_yaml, p_tag, set_seed, split_file_path
+from src.utils import ensure_dir, load_json, load_yaml, make_exp_id, p_tag, set_seed, split_file_path
 
 
 def _apply_paper_preset(cfg: dict, model_type: str, epoch_cap: int | None) -> dict:
@@ -49,7 +49,6 @@ def main() -> None:
     pp_cfg = load_yaml(ROOT / "configs/preprocess.yaml")
     clf_cfg = load_yaml(ROOT / "configs/clf.yaml")
 
-    p_tag_value = p_tag(args.p)
     split_path = split_file_path(ROOT, subject=args.subject, seed=args.seed, p=args.p)
     if not split_path.exists():
         raise FileNotFoundError(f"Missing split file: {split_path}")
@@ -62,7 +61,14 @@ def main() -> None:
     rows = []
     for model_type in model_list:
         cfg = _apply_paper_preset(clf_cfg, model_type=model_type, epoch_cap=args.epoch_cap if args.epoch_cap > 0 else None)
-        run_dir = ROOT / "runs/clf" / f"paper_none__subj-{args.subject:02d}__seed-{args.seed}__p-{p_tag_value}__clf-{model_type}"
+        run_id = make_exp_id(
+            "paper_none",
+            subject=int(args.subject),
+            seed=int(args.seed),
+            p=float(args.p),
+            clf=model_type,
+        )
+        run_dir = ROOT / "runs/clf" / run_id
         metrics = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0, evaluate_test=True)
         rows.append(
             {
@@ -82,7 +88,8 @@ def main() -> None:
         )
 
     out_dir = ensure_dir(ROOT / "results/metrics")
-    out_csv = out_dir / f"paper_noaug_subject_{args.subject:02d}_seed_{args.seed}_p_{p_tag}.csv"
+    tag = p_tag(args.p)
+    out_csv = out_dir / f"paper_noaug_subject_{args.subject:02d}_seed_{args.seed}_p_{tag}.csv"
     pd.DataFrame(rows).to_csv(out_csv, index=False)
     print(f"Saved -> {out_csv}")
 

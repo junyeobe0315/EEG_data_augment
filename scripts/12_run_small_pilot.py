@@ -18,7 +18,7 @@ from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
 from src.train_clf import train_classifier
 from src.train_gen import train_generative_model
-from src.utils import ensure_dir, load_json, load_yaml, p_tag, save_json, set_seed, split_file_path
+from src.utils import ensure_dir, load_json, load_yaml, make_exp_id, save_json, set_seed, split_file_path
 
 
 def main() -> None:
@@ -54,8 +54,17 @@ def main() -> None:
     gen_model = normalize_generator_type(str(args.gen_model))
     clf_model = normalize_classifier_type(str(args.clf_model))
 
-    tag = f"__{args.tag}" if str(args.tag).strip() else ""
-    pilot_id = f"pilot__subj-{int(args.subject):02d}__seed-{int(args.seed)}__p-{p_tag(args.p)}__gen-{gen_model}__clf-{clf_model}__r-{args.ratio}{tag}"
+    pilot_meta = {
+        "subject": int(args.subject),
+        "seed": int(args.seed),
+        "p": float(args.p),
+        "gen": gen_model,
+        "clf": clf_model,
+        "ratio": float(args.ratio),
+    }
+    if str(args.tag).strip():
+        pilot_meta["tag"] = str(args.tag).strip()
+    pilot_id = make_exp_id("pilot", **pilot_meta)
 
     # 1) Train generator (lightweight settings)
     gen_run_cfg = copy.deepcopy(gen_cfg)
@@ -127,7 +136,8 @@ def main() -> None:
     clf_run_cfg["train"]["step_control"]["total_steps"] = int(args.clf_steps)
     clf_run_cfg["train"]["step_control"]["steps_per_eval"] = max(10, int(args.clf_steps // 5))
 
-    base_out = ROOT / "runs/clf" / f"{pilot_id}__baseline"
+    base_id = make_exp_id("pilot_clf", **pilot_meta, mode="baseline")
+    base_out = ROOT / "runs/clf" / base_id
     set_seed(int(args.seed) + 40)
     m_base = train_classifier(
         split=split,
@@ -140,7 +150,8 @@ def main() -> None:
         evaluate_test=bool(args.evaluate_test),
     )
 
-    genaug_out = ROOT / "runs/clf" / f"{pilot_id}__genaug"
+    genaug_id = make_exp_id("pilot_clf", **pilot_meta, mode="genaug")
+    genaug_out = ROOT / "runs/clf" / genaug_id
     set_seed(int(args.seed) + 50)
     m_gen = train_classifier(
         split=split,

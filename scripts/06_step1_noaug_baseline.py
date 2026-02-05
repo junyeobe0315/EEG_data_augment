@@ -13,7 +13,7 @@ ROOT = project_root(__file__)
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, load_json, load_yaml, p_tag, set_seed
+from src.utils import ensure_dir, load_json, load_yaml, make_exp_id, p_tag, set_seed
 
 
 def main() -> None:
@@ -58,7 +58,14 @@ def main() -> None:
                 if int(bs) > 0:
                     cfg["train"]["batch_size"] = int(bs)
 
-            run_dir = ROOT / "runs/clf" / f"step1_none__subj-{subject:02d}__seed-{seed}__p-{tag}__clf-{clf_model}"
+            run_id = make_exp_id(
+                "step1_none",
+                subject=subject,
+                seed=seed,
+                p=float(p_target),
+                clf=clf_model,
+            )
+            run_dir = ROOT / "runs/clf" / run_id
             m = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0, evaluate_test=True)
             rows.append(
                 {

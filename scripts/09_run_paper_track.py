@@ -15,7 +15,7 @@ ROOT = project_root(__file__)
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, load_yaml, set_seed
+from src.utils import ensure_dir, load_yaml, make_exp_id, set_seed
 
 
 def _split_subject_index(
@@ -114,7 +114,16 @@ def main() -> None:
                 val_ratio=val_ratio,
                 stratify=split_stratify,
             )
-            run_dir = ROOT / "runs/clf" / f"paper_track__subj-{subject:02d}__seed-{seed}__model-{model_type}"
+            run_id = make_exp_id(
+                "paper_track",
+                subject=subject,
+                seed=seed,
+                clf=model_type,
+                track=track_name,
+                aug=aug_mode,
+                val=val_ratio,
+            )
+            run_dir = ROOT / "runs/clf" / run_id
             metrics = train_classifier(
                 split=split,
                 index_df=index_df,

@@ -152,7 +152,7 @@ def main() -> None:
                 seed=seed,
                 p=p,
                 split=sf.stem,
-                gmodel=gen_model,
+                gen=gen_model,
             )
             ckpt_path = ROOT / "runs/gen" / exp_id / "ckpt.pt"
             if not ckpt_path.exists():

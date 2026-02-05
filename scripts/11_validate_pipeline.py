@@ -14,7 +14,7 @@ from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.models_gen import normalize_generator_type
 from src.train_clf import train_classifier
-from src.utils import load_json, load_yaml, set_seed, split_file_path
+from src.utils import load_json, load_yaml, make_exp_id, set_seed, split_file_path
 
 
 def _assert(cond: bool, msg: str) -> None:
@@ -112,7 +112,13 @@ def run_smoke() -> None:
     cfg["augmentation"]["modes"] = ["none"]
 
     set_seed(seed)
-    out_dir = ROOT / "runs/clf" / "pipeline_validation_smoke"
+    run_id = make_exp_id(
+        "pipeline_validation_smoke",
+        subject=subject,
+        seed=seed,
+        p=p,
+    )
+    out_dir = ROOT / "runs/clf" / run_id
     metrics = train_classifier(
         split=split,
         index_df=idx,
