@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
 from pathlib import Path
 
 from _script_utils import project_root
@@ -19,7 +18,7 @@ from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
 from src.train_clf import train_classifier
 from src.train_gen import train_generative_model
-from src.utils import ensure_dir, load_json, load_yaml, p_tag, set_seed, split_file_path
+from src.utils import ensure_dir, load_json, load_yaml, p_tag, save_json, set_seed, split_file_path
 
 
 def main() -> None:
@@ -200,8 +199,7 @@ def main() -> None:
         "acc_gain": float(m_gen.get("acc", float("nan")) - m_base.get("acc", float("nan"))),
     }
     out_json = out_dir / f"{pilot_id}.json"
-    with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=True, indent=2)
+    save_json(out_json, report)
 
     print(f"[pilot] saved metrics -> {out_csv}")
     print(f"[pilot] saved summary -> {out_json}")

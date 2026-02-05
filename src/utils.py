@@ -22,6 +22,13 @@ def load_json(path: str | Path) -> Any:
         return json.load(f)
 
 
+def save_json(path: str | Path, obj: Any, indent: int = 2) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=True, indent=indent)
+
+
 def ensure_dir(path: str | Path) -> Path:
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
@@ -116,6 +123,13 @@ def find_split_files(root: str | Path, split_cfg: dict) -> list[Path]:
     return []
 
 
+def require_split_files(root: str | Path, split_cfg: dict) -> list[Path]:
+    files = find_split_files(root, split_cfg)
+    if not files:
+        raise RuntimeError("No split files found. Run scripts/01_make_splits.py first.")
+    return files
+
+
 def p_tag(value: float) -> str:
     return str(float(value)).replace(".", "p")
 
@@ -123,6 +137,15 @@ def p_tag(value: float) -> str:
 def split_file_path(root: str | Path, subject: int, seed: int, p: float) -> Path:
     split_dir = Path(root) / "data" / "splits"
     return split_dir / f"subject_{int(subject):02d}_seed_{int(seed)}_p_{p_tag(p)}.json"
+
+
+def load_split_any(path_like: str | Path, split_name: str, root: str | Path) -> Any:
+    p = Path(path_like)
+    if not p.exists():
+        p = Path(root) / "data" / "splits" / f"{split_name}.json"
+    if not p.exists():
+        raise FileNotFoundError(f"Split not found: {path_like} / {p}")
+    return load_json(p)
 
 
 def build_ckpt_payload(

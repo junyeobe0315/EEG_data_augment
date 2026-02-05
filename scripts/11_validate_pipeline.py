@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from _script_utils import project_root
@@ -15,7 +14,7 @@ from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.models_gen import normalize_generator_type
 from src.train_clf import train_classifier
-from src.utils import load_yaml, p_tag, set_seed, split_file_path
+from src.utils import load_json, load_yaml, set_seed, split_file_path
 
 
 def _assert(cond: bool, msg: str) -> None:
@@ -94,8 +93,7 @@ def run_smoke() -> None:
     seed = int(split_cfg["seeds"][0])
     p = float(split_cfg["low_data_fracs"][0])
     sf = split_file_path(ROOT, subject=subject, seed=seed, p=p)
-    with open(sf, "r", encoding="utf-8") as f:
-        split = json.load(f)
+    split = load_json(sf)
 
     idx = load_processed_index(data_cfg["index_path"])
 

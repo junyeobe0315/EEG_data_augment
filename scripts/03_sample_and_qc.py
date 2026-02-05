@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import json
 from pathlib import Path
 
 from _script_utils import project_root
@@ -17,7 +16,7 @@ from src.dataio import load_processed_index, load_samples_by_ids
 from src.models_gen import normalize_generator_type
 from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
-from src.utils import ensure_dir, find_split_files, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
+from src.utils import ensure_dir, in_allowed_grid, load_json, load_yaml, make_exp_id, require_split_files, save_json, set_seed, stable_hash_seed
 
 
 def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
@@ -128,7 +127,7 @@ def main() -> None:
     qc_dir = ensure_dir(ROOT / "runs/synth_qc")
     metric_dir = ensure_dir(ROOT / "results/metrics")
 
-    split_files = find_split_files(ROOT, split_cfg)
+    split_files = require_split_files(ROOT, split_cfg)
 
     reports = []
     for gen_model in gen_models:
@@ -223,12 +222,9 @@ def main() -> None:
                 "qc_keep_ratio": float(report.get("keep_ratio", 0.0)),
                 **sample_meta,
             }
-            with open(synth_path.with_suffix(".meta.json"), "w", encoding="utf-8") as f:
-                json.dump(synth_meta, f, ensure_ascii=True, indent=2)
-            with open(kept_path.with_suffix(".meta.json"), "w", encoding="utf-8") as f:
-                json.dump({**synth_meta, "qc_enabled": True}, f, ensure_ascii=True, indent=2)
-            with open(kept_path.with_suffix(".report.json"), "w", encoding="utf-8") as f:
-                json.dump(report, f, ensure_ascii=True, indent=2)
+            save_json(synth_path.with_suffix(".meta.json"), synth_meta)
+            save_json(kept_path.with_suffix(".meta.json"), {**synth_meta, "qc_enabled": True})
+            save_json(kept_path.with_suffix(".report.json"), report)
 
             reports.append({"split": sf.stem, "subject": subject, "seed": seed, "p": p, "gen_model": gen_model, **report})
 

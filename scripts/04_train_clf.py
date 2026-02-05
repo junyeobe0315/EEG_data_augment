@@ -15,7 +15,7 @@ from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.models_gen import normalize_generator_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, find_split_files, in_allowed_grid, load_json, load_yaml, make_exp_id, set_seed, stable_hash_seed
+from src.utils import ensure_dir, in_allowed_grid, load_json, load_yaml, make_exp_id, require_split_files, set_seed, stable_hash_seed
 
 
 def _build_clf_cfg(
@@ -164,7 +164,7 @@ def main() -> None:
     index_df = load_processed_index(data_cfg["index_path"])
     metric_dir = ensure_dir(ROOT / "results/metrics")
 
-    split_files = find_split_files(ROOT, split_cfg)
+    split_files = require_split_files(ROOT, split_cfg)
 
     rows = []
     for sf in split_files:

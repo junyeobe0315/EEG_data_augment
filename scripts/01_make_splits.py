@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from _script_utils import project_root
@@ -12,13 +11,7 @@ from sklearn.model_selection import train_test_split
 ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index
-from src.utils import ensure_dir, load_yaml
-
-
-def _save_json(path: Path, obj: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=True, indent=2)
+from src.utils import ensure_dir, load_yaml, p_tag, save_json
 
 
 def _stratified_subsample(ids: list[str], labels: list[int], frac: float, seed: int) -> list[str]:
@@ -90,7 +83,7 @@ def main() -> None:
                 "test_ids": list(te_ids),
             }
             base_path = split_dir / f"subject_{subject:02d}_seed_{int(seed)}.json"
-            _save_json(base_path, base)
+            save_json(base_path, base)
             n_saved += 1
 
             # low-data variants: subsample only T_train
@@ -102,9 +95,9 @@ def main() -> None:
                     "low_data_frac": float(frac),
                     "train_ids": sub_train_ids,
                 }
-                tag = str(frac).replace(".", "p")
+                tag = p_tag(frac)
                 p_path = split_dir / f"subject_{subject:02d}_seed_{int(seed)}_p_{tag}.json"
-                _save_json(p_path, low)
+                save_json(p_path, low)
                 n_saved += 1
 
     print(f"Saved {n_saved} split files under {split_dir}")

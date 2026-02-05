@@ -12,16 +12,7 @@ ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index
 from src.eval import evaluate_saved_classifier
-from src.utils import load_json, load_yaml
-
-
-def _load_split(path_like: str, split_name: str) -> dict:
-    p = Path(path_like)
-    if not p.exists():
-        p = ROOT / "data/splits" / f"{split_name}.json"
-    if not p.exists():
-        raise FileNotFoundError(f"Split not found: {path_like} / {p}")
-    return load_json(p)
+from src.utils import load_split_any, load_yaml
 
 
 def main() -> None:
@@ -54,7 +45,7 @@ def main() -> None:
             rows.append(row)
             continue
 
-        split = _load_split(str(row.get("split_file", "")), str(row.get("split", "")))
+        split = load_split_any(str(row.get("split_file", "")), str(row.get("split", "")), root=ROOT)
 
         # Rebuild classifier config with per-row model key.
         run_cfg = {

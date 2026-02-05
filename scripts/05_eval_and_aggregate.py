@@ -14,16 +14,7 @@ ROOT = project_root(__file__)
 from src.aggregate import aggregate_metrics
 from src.dataio import load_processed_index, load_samples_by_ids
 from src.distribution import FrozenEEGNetEmbedder, classwise_distance_summary
-from src.utils import load_json, load_yaml, resolve_device
-
-
-def _load_split_obj(split_file: str | Path, split_name: str) -> dict:
-    p = Path(split_file)
-    if not p.exists():
-        p = ROOT / "data/splits" / f"{split_name}.json"
-    if not p.exists():
-        raise FileNotFoundError(f"Split json not found: {split_file} / {p}")
-    return load_json(p)
+from src.utils import load_split_any, load_yaml, resolve_device
 
 
 def _resolve_baseline_ckpts(df: pd.DataFrame, baseline_model: str) -> dict[str, Path]:
@@ -97,7 +88,7 @@ def _attach_distribution_distance(df: pd.DataFrame) -> pd.DataFrame:
 
         if split_name not in real_cache:
             try:
-                split_obj = _load_split_obj(str(row.get("split_file", "")), split_name=split_name)
+                split_obj = load_split_any(str(row.get("split_file", "")), split_name=split_name, root=ROOT)
                 x_real, y_real = load_samples_by_ids(index_df, split_obj["train_ids"])
                 x_real = embedder.normalize(x_real)
                 real_emb = embedder.transform(x_real)

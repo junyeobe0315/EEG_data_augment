@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -19,7 +18,7 @@ from src.models_clf import (
     normalize_classifier_type,
 )
 from src.preprocess import ZScoreNormalizer
-from src.utils import append_jsonl, build_ckpt_payload, ensure_dir, proportional_allocation, resolve_device
+from src.utils import append_jsonl, build_ckpt_payload, ensure_dir, proportional_allocation, resolve_device, save_json
 
 
 def _classical_augment_numpy(
@@ -431,8 +430,7 @@ def train_classifier(
                 "best_ckpt_epoch": 1,
             }
         )
-        with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
-            json.dump(train_meta, f, ensure_ascii=True, indent=2)
+        save_json(exp_dir / "training_meta.json", train_meta)
 
         selected = test_metrics if evaluate_test else val_metrics
         out = {
@@ -464,8 +462,7 @@ def train_classifier(
             "best_ckpt_step": None,
             "best_ckpt_epoch": 1,
         }
-        with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
-            json.dump(out, f, ensure_ascii=True, indent=2)
+        save_json(exp_dir / "metrics.json", out)
         return out
 
     device = resolve_device(clf_cfg["train"].get("device", "auto"))
@@ -633,8 +630,7 @@ def train_classifier(
             "best_ckpt_epoch": int(best_ckpt_epoch) if best_ckpt_epoch is not None else None,
         }
     )
-    with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
-        json.dump(train_meta, f, ensure_ascii=True, indent=2)
+    save_json(exp_dir / "training_meta.json", train_meta)
 
     selected = test_metrics if evaluate_test else best_val_metrics
     out = {
@@ -666,6 +662,5 @@ def train_classifier(
         "best_ckpt_step": int(best_ckpt_step) if best_ckpt_step is not None else None,
         "best_ckpt_epoch": int(best_ckpt_epoch) if best_ckpt_epoch is not None else None,
     }
-    with open(exp_dir / "metrics.json", "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=True, indent=2)
+    save_json(exp_dir / "metrics.json", out)
     return out

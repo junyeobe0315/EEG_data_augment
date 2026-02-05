@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import json
 from pathlib import Path
 
 from _script_utils import project_root

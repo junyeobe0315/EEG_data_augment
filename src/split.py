@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
+
+from src.utils import load_json, save_json
 
 
 def _stratified_split(ids: List[str], y: List[int], test_size: float, seed: int):
@@ -87,12 +88,8 @@ def make_split(
 
 
 def save_split(path: str | Path, split: Dict[str, List[str]]) -> None:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(split, f, ensure_ascii=True, indent=2)
+    save_json(path, split)
 
 
 def load_split(path: str | Path) -> Dict[str, List[str]]:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_json(path)

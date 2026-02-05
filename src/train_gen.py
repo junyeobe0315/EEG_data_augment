@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any, Callable, Dict
@@ -25,7 +24,7 @@ from src.models_gen import (
 from src.preprocess import ZScoreNormalizer
 from src.qc import run_qc
 from src.sample_gen import sample_by_class
-from src.utils import append_jsonl, ensure_dir, proportional_allocation, resolve_device, set_seed
+from src.utils import append_jsonl, ensure_dir, proportional_allocation, resolve_device, save_json, set_seed
 
 
 SaveEpochCallback = Callable[[int, dict[str, Any], dict[str, float]], None]
@@ -636,8 +635,7 @@ def _select_best_checkpoint(
     # If the reference ratio is 0 (or no real data), selection is meaningless: pick the final checkpoint.
     if ratio_ref <= 0.0 or max_real_class <= 0 or n_per_class <= 0:
         best_path = Path(ckpt_candidates[-1]["path"])
-        with open(out_dir / "ckpt_scores.json", "w", encoding="utf-8") as f:
-            json.dump([], f, ensure_ascii=True, indent=2)
+        save_json(out_dir / "ckpt_scores.json", [])
         return best_path, [], selection_meta
 
     scores: list[dict[str, Any]] = []
@@ -770,8 +768,7 @@ def _select_best_checkpoint(
     for r in scores:
         r["selected"] = Path(r["ckpt_path"]) == best_path
 
-    with open(out_dir / "ckpt_scores.json", "w", encoding="utf-8") as f:
-        json.dump(scores, f, ensure_ascii=True, indent=2)
+    save_json(out_dir / "ckpt_scores.json", scores)
 
     return best_path, scores, selection_meta
 
@@ -915,8 +912,7 @@ def train_generative_model(
 
     ckpt_candidates = sorted(ckpt_candidates, key=lambda x: int(x["epoch"]))
 
-    with open(exp_dir / "ckpt_list.json", "w", encoding="utf-8") as f:
-        json.dump(ckpt_candidates, f, ensure_ascii=True, indent=2)
+    save_json(exp_dir / "ckpt_list.json", ckpt_candidates)
 
     sel_cfg = gen_cfg.get("checkpoint_selection", {})
     do_select = bool(sel_cfg.get("enabled", True)) and clf_cfg is not None and len(split.get("val_ids", [])) > 0
@@ -966,7 +962,6 @@ def train_generative_model(
         "proxy_sample_n_per_class_effective": int(sel_meta.get("sample_n_per_class_effective", 0)),
         "checkpoint_selection": sel_meta,
     }
-    with open(exp_dir / "training_meta.json", "w", encoding="utf-8") as f:
-        json.dump(train_meta, f, ensure_ascii=True, indent=2)
+    save_json(exp_dir / "training_meta.json", train_meta)
 
     return exp_dir

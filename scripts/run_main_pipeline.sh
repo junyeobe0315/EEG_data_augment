@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
-export JOBLIB_TEMP_FOLDER="${JOBLIB_TEMP_FOLDER:-/tmp}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_pipeline_lib.sh"
 ROOT="$(pipeline_repo_root)"
 cd "${ROOT}"
+setup_runtime_env
 
 # Optional: CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 resolve_python

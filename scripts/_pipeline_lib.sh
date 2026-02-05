@@ -54,3 +54,8 @@ resolve_python() {
     fi
   fi
 }
+
+setup_runtime_env() {
+  export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
+  export JOBLIB_TEMP_FOLDER="${JOBLIB_TEMP_FOLDER:-/tmp}"
+}

@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-/tmp/numba_cache}"
-export JOBLIB_TEMP_FOLDER="${JOBLIB_TEMP_FOLDER:-/tmp}"
 
 # Usage examples:
 #   ./scripts/run_official_faithful.sh
@@ -11,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_pipeline_lib.sh"
 ROOT="$(pipeline_repo_root)"
 cd "${ROOT}"
+setup_runtime_env
 
 SEED="${SEED:-0}"
 TAG="${TAG:-}"
