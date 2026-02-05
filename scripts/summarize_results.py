@@ -12,17 +12,28 @@ if str(ROOT) not in sys.path:
 
 
 def main() -> None:
+    """Aggregate results.csv into mean/std summaries.
+
+    Inputs:
+    - results.csv path.
+
+    Outputs:
+    - summary.csv with mean/std grouped by method/classifier/r/alpha/qc/generator.
+
+    Internal logic:
+    - Groups by experimental keys and computes mean/std for core metrics.
+    """
     parser = argparse.ArgumentParser(description="Summarize results.csv")
     parser.add_argument("--results", type=str, default="results/results.csv")
     parser.add_argument("--out", type=str, default="results/summary.csv")
     args = parser.parse_args()
 
-    df = pd.read_csv(args.results)
+    df = pd.read_csv(args.results)  # full results table
     if df.empty:
         raise RuntimeError("results.csv is empty.")
 
-    group_cols = ["method", "classifier", "r", "alpha_ratio", "qc_on", "generator"]
-    metrics = ["acc", "kappa", "macro_f1"]
+    group_cols = ["method", "classifier", "r", "alpha_ratio", "qc_on", "generator"]  # grouping keys
+    metrics = ["acc", "kappa", "macro_f1"]  # report metrics
 
     summary = df.groupby(group_cols)[metrics].agg(["mean", "std"]).reset_index()
     out_path = Path(args.out)

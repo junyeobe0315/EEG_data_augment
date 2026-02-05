@@ -5,6 +5,17 @@ import numpy as np
 
 
 def _median_heuristic_gamma(x: np.ndarray, y: np.ndarray) -> float:
+    """Compute RBF gamma using the median heuristic.
+
+    Inputs:
+    - x, y: arrays [N, D] and [M, D].
+
+    Outputs:
+    - gamma: float for RBF kernel.
+
+    Internal logic:
+    - Computes pairwise squared distances on a subsample and uses median as sigma^2.
+    """
     z = np.concatenate([x, y], axis=0)
     if len(z) > 1024:
         idx = np.random.choice(len(z), size=1024, replace=False)
@@ -16,11 +27,37 @@ def _median_heuristic_gamma(x: np.ndarray, y: np.ndarray) -> float:
 
 
 def _rbf_kernel(x: np.ndarray, y: np.ndarray, gamma: float) -> np.ndarray:
+    """Compute RBF kernel matrix.
+
+    Inputs:
+    - x: [N, D]
+    - y: [M, D]
+    - gamma: kernel parameter.
+
+    Outputs:
+    - kernel matrix [N, M].
+
+    Internal logic:
+    - Computes squared L2 distances and applies exp(-gamma * d2).
+    """
     d2 = np.sum((x[:, None, :] - y[None, :, :]) ** 2, axis=-1)
     return np.exp(-gamma * d2)
 
 
 def mmd_rbf(x: np.ndarray, y: np.ndarray, gamma: float | str = "median_heuristic") -> float:
+    """Compute MMD with an RBF kernel.
+
+    Inputs:
+    - x: [N, D]
+    - y: [M, D]
+    - gamma: float or "median_heuristic".
+
+    Outputs:
+    - MMD value (float).
+
+    Internal logic:
+    - Uses unbiased MMD estimator with optional median-heuristic gamma.
+    """
     if len(x) < 2 or len(y) < 2:
         return math.nan
     if isinstance(gamma, str):
@@ -37,6 +74,20 @@ def mmd_rbf(x: np.ndarray, y: np.ndarray, gamma: float | str = "median_heuristic
 
 
 def sliced_wasserstein_distance(x: np.ndarray, y: np.ndarray, n_projections: int = 64, seed: int = 0) -> float:
+    """Approximate Sliced Wasserstein distance.
+
+    Inputs:
+    - x: [N, D]
+    - y: [M, D]
+    - n_projections: number of random projections.
+    - seed: RNG seed.
+
+    Outputs:
+    - SWD value (float).
+
+    Internal logic:
+    - Projects onto random directions, sorts projections, and averages L1 distances.
+    """
     if len(x) == 0 or len(y) == 0:
         return math.nan
     rng = np.random.default_rng(seed)
@@ -74,6 +125,21 @@ def classwise_distance_summary(
     seed: int = 0,
     class_priors: np.ndarray | None = None,
 ) -> dict:
+    """Compute class-wise and aggregated distance summaries.
+
+    Inputs:
+    - real_emb/real_y: real embeddings [N, D] and labels [N].
+    - aug_emb/aug_y: synthetic embeddings [M, D] and labels [M].
+    - num_classes: number of classes.
+    - n_projections, mmd_gamma, seed: distance settings.
+    - class_priors: optional priors for weighted aggregation.
+
+    Outputs:
+    - dict with per-class distances and weighted averages.
+
+    Internal logic:
+    - Computes per-class MMD/SWD and aggregates using class priors from real data.
+    """
     rows = {}
     swd_vals = []
     mmd_vals = []

@@ -17,6 +17,18 @@ from src.utils.io import ensure_dir, write_json
 
 
 def _build_optimizer(tcfg: Dict, params) -> torch.optim.Optimizer:
+    """Build an optimizer from train config.
+
+    Inputs:
+    - tcfg: train config dict (optimizer, lr, weight_decay, etc.).
+    - params: model parameters.
+
+    Outputs:
+    - torch optimizer instance.
+
+    Internal logic:
+    - Selects optimizer type (Adam/AdamW/SGD) and applies hyperparameters.
+    """
     opt_name = str(tcfg.get("optimizer", "adam")).lower()
     lr = float(tcfg.get("lr", 1e-3))
     weight_decay = float(tcfg.get("weight_decay", 1e-4))
@@ -29,6 +41,18 @@ def _build_optimizer(tcfg: Dict, params) -> torch.optim.Optimizer:
 
 
 def _apply_cuda_speed(train_cfg: Dict, device: torch.device) -> None:
+    """Apply CUDA speed settings (TF32, matmul precision).
+
+    Inputs:
+    - train_cfg: training config dict.
+    - device: torch.device.
+
+    Outputs:
+    - None (modifies torch backend flags).
+
+    Internal logic:
+    - Enables TF32 and matmul precision hints when running on CUDA.
+    """
     if device.type != "cuda":
         return
     cuda_cfg = train_cfg.get("cuda", {}) if isinstance(train_cfg, dict) else {}
@@ -41,11 +65,37 @@ def _apply_cuda_speed(train_cfg: Dict, device: torch.device) -> None:
 
 
 def _soft_cross_entropy(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Compute cross-entropy with soft labels.
+
+    Inputs:
+    - logits: torch.Tensor [B, K]
+    - target: torch.Tensor [B, K] soft labels
+
+    Outputs:
+    - scalar loss tensor.
+
+    Internal logic:
+    - Applies log-softmax then computes mean negative log-likelihood.
+    """
     log_probs = torch.log_softmax(logits, dim=1)
     return -(target * log_probs).sum(dim=1).mean()
 
 
 def _evaluate_torch(model: nn.Module, x: np.ndarray, y: np.ndarray, device: torch.device) -> dict[str, float]:
+    """Evaluate a torch model on numpy data.
+
+    Inputs:
+    - model: torch.nn.Module
+    - x: ndarray [N, C, T]
+    - y: ndarray [N]
+    - device: torch.device
+
+    Outputs:
+    - metrics dict (acc/kappa/macro_f1).
+
+    Internal logic:
+    - Runs batched inference on device and computes metrics from predictions.
+    """
     model.eval()
     preds = []
     with torch.no_grad():
@@ -78,14 +128,38 @@ def train_classifier(
     evaluate_test: bool = False,
     aug_cfg: dict | None = None,
 ) -> dict:
+    """Train a classifier (torch or sklearn) with optional augmentation.
+
+    Inputs:
+    - x_train/y_train: training data [N, C, T] / [N]
+    - x_val/y_val: validation data [M, C, T] / [M]
+    - x_test/y_test: test data [Q, C, T] / [Q]
+    - model_type/model_cfg: classifier selection and hyperparams
+    - train_cfg/eval_cfg: training and selection configs
+    - method: C0/C1/C2/GenAug
+    - alpha_ratio: synth:real ratio (logged)
+    - num_classes: number of classes
+    - run_dir: output directory for metrics/ckpt
+    - normalizer_state: fitted normalizer state
+    - synth_data: optional (X_syn, y_syn)
+    - evaluate_test: whether to compute test metrics
+    - aug_cfg: traditional augmentation params
+
+    Outputs:
+    - metrics dict with validation/test scores and effective ratios.
+
+    Internal logic:
+    - Builds augmented dataset (GenAug or traditional or mixup) and trains.
+    - Uses early stopping on validation and saves best checkpoint.
+    """
     ensure_dir(run_dir)
     model_type = normalize_classifier_type(model_type)
 
     # Augmentation strategy
-    x_aug = x_train
-    y_aug = y_train
-    n_real = int(len(x_train))
-    n_syn = 0
+    x_aug = x_train  # augmented training data (initialized to real)
+    y_aug = y_train  # augmented labels
+    n_real = int(len(x_train))  # number of real samples
+    n_syn = 0  # number of synthetic samples
 
     if method == "GenAug" and synth_data is not None:
         x_syn, y_syn = synth_data
@@ -94,8 +168,8 @@ def train_classifier(
             y_aug = np.concatenate([y_train, y_syn], axis=0)
             n_syn = int(len(x_syn))
 
-    ratio_effective = float(n_syn / max(1, n_real))
-    alpha_mix_effective = alpha_ratio_to_mix(ratio_effective)
+    ratio_effective = float(n_syn / max(1, n_real))  # actual synth:real ratio
+    alpha_mix_effective = alpha_ratio_to_mix(ratio_effective)  # mixture weight
 
     if is_sklearn_model(model_type):
         model = build_classifier(model_type, x_train.shape[1], x_train.shape[2], num_classes, model_cfg)
@@ -131,10 +205,21 @@ def train_classifier(
 
     model = build_classifier(model_type, x_train.shape[1], x_train.shape[2], num_classes, model_cfg).to(device)
 
-    batch_size = int(train_cfg.get("batch_size", 64))
-    num_workers = int(train_cfg.get("num_workers", 0))
+    batch_size = int(train_cfg.get("batch_size", 64))  # training batch size
+    num_workers = int(train_cfg.get("num_workers", 0))  # dataloader workers
 
     def _seed_worker(worker_id: int) -> None:
+        """Seed a DataLoader worker for deterministic behavior.
+
+        Inputs:
+        - worker_id: integer worker index.
+
+        Outputs:
+        - None (sets NumPy seed for worker).
+
+        Internal logic:
+        - Uses torch.initial_seed to derive a per-worker NumPy seed.
+        """
         seed = torch.initial_seed() % 2**32
         np.random.seed(seed + worker_id)
 
@@ -148,22 +233,33 @@ def train_classifier(
     )
 
     opt = _build_optimizer(train_cfg, model.parameters())
-    best_metric = float("-inf")
-    best_state = None
-    best_metrics = {}
+    best_metric = float("-inf")  # track best validation score
+    best_state = None  # model state for best validation
+    best_metrics = {}  # cached best validation metrics
 
-    step_cfg = train_cfg.get("step_control", {})
+    step_cfg = train_cfg.get("step_control", {})  # optional step-based training
     use_step_control = bool(step_cfg.get("enabled", False))
 
-    total_steps = int(step_cfg.get("total_steps", 0))
-    steps_per_eval = int(step_cfg.get("steps_per_eval", 100))
+    total_steps = int(step_cfg.get("total_steps", 0))  # total training steps (if enabled)
+    steps_per_eval = int(step_cfg.get("steps_per_eval", 100))  # eval cadence
 
     loss_fn = nn.CrossEntropyLoss()
 
-    mixup_alpha = float(train_cfg.get("mixup_alpha", 0.2))
+    mixup_alpha = float(train_cfg.get("mixup_alpha", 0.2))  # Beta alpha for mixup
     aug_cfg = aug_cfg or {}
 
     def _eval_and_update() -> None:
+        """Evaluate on validation data and update best checkpoint state.
+
+        Inputs:
+        - None (uses closure variables for model and eval_cfg).
+
+        Outputs:
+        - None (updates nonlocal best_metric/state/metrics).
+
+        Internal logic:
+        - Computes validation metrics and saves state if improved.
+        """
         nonlocal best_metric, best_state, best_metrics
         val_metrics = _evaluate_torch(model, x_val, y_val, device)
         metric_key = str(eval_cfg.get("best_metric", "kappa"))

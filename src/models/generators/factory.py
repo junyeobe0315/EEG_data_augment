@@ -17,6 +17,19 @@ def build_generator(
     num_classes: int,
     model_cfg: dict,
 ) -> torch.nn.Module:
+    """Build a generator model by type.
+
+    Inputs:
+    - model_type: generator key.
+    - in_channels/time_steps/num_classes: data shape info.
+    - model_cfg: generator hyperparameters.
+
+    Outputs:
+    - torch.nn.Module generator instance.
+
+    Internal logic:
+    - Normalizes model_type and dispatches to CWGAN-GP or DDPM builders.
+    """
     mtype = normalize_generator_type(model_type)
     if mtype == "cwgan_gp":
         return CWGANGenerator(
@@ -48,6 +61,19 @@ def build_critic(
     num_classes: int,
     model_cfg: dict,
 ) -> torch.nn.Module | None:
+    """Build a critic (discriminator) if required by generator type.
+
+    Inputs:
+    - model_type: generator key.
+    - in_channels/time_steps/num_classes: data shape info.
+    - model_cfg: generator hyperparameters.
+
+    Outputs:
+    - critic module or None for non-GAN generators.
+
+    Internal logic:
+    - Returns CWGANCritic only for cwgan_gp, otherwise None.
+    """
     mtype = normalize_generator_type(model_type)
     if mtype != "cwgan_gp":
         return None
@@ -61,6 +87,18 @@ def build_critic(
 
 
 def load_generator_checkpoint(ckpt_path: str | Path, device: str = "cpu") -> dict[str, Any]:
+    """Load a generator checkpoint dict.
+
+    Inputs:
+    - ckpt_path: checkpoint path.
+    - device: torch device.
+
+    Outputs:
+    - checkpoint dict (model_type, state, cfg, etc.).
+
+    Internal logic:
+    - Loads with torch.load and falls back for older torch versions.
+    """
     try:
         ckpt = torch.load(Path(ckpt_path), map_location=device, weights_only=False)
     except TypeError:

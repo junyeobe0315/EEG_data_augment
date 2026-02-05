@@ -9,6 +9,17 @@ from src.data.splits import build_splits
 
 
 def _make_index_df() -> pd.DataFrame:
+    """Build a tiny synthetic index dataframe for split tests.
+
+    Inputs:
+    - None (uses fixed synthetic values).
+
+    Outputs:
+    - DataFrame with subject/session/label columns and fake file/row entries.
+
+    Internal logic:
+    - Enumerates sessions and labels to build a balanced fake dataset.
+    """
     rows = []
     idx = 0
     for session in ["T", "E"]:
@@ -29,6 +40,17 @@ def _make_index_df() -> pd.DataFrame:
 
 
 def test_build_splits_disjoint(tmp_path: Path) -> None:
+    """Ensure train/val/test indices are disjoint.
+
+    Inputs:
+    - tmp_path: pytest temp directory for split outputs.
+
+    Outputs:
+    - Asserts no overlap across train/val/test index files.
+
+    Internal logic:
+    - Writes split files then loads them and checks set intersections.
+    """
     index_df = _make_index_df()
     split_cfg = {"protocol": "cross_session", "val_ratio": 0.2, "seeds": [0], "low_data_fracs": [0.5]}
 

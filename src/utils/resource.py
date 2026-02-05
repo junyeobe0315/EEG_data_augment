@@ -7,6 +7,17 @@ import torch
 
 
 def get_git_commit() -> str:
+    """Return the current git short commit hash.
+
+    Inputs:
+    - None (uses git CLI).
+
+    Outputs:
+    - short commit hash string or "unknown" if unavailable.
+
+    Internal logic:
+    - Executes `git rev-parse --short HEAD` and catches errors.
+    """
     try:
         out = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL)
         return out.decode("utf-8").strip()
@@ -15,6 +26,17 @@ def get_git_commit() -> str:
 
 
 def get_gpu_info() -> Tuple[str, str]:
+    """Return GPU name and memory.
+
+    Inputs:
+    - None (queries torch CUDA API).
+
+    Outputs:
+    - (name, total_memory_bytes) or ("cpu", "0") if no CUDA.
+
+    Internal logic:
+    - Uses torch.cuda APIs to retrieve device name and memory.
+    """
     if not torch.cuda.is_available():
         return ("cpu", "0")
     name = torch.cuda.get_device_name(0)

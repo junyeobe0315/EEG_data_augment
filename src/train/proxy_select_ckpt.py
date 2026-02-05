@@ -20,6 +20,22 @@ def _sample_by_class(
     device: str = "cpu",
     ddpm_steps: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Sample a fixed number of synthetic trials per class from a checkpoint.
+
+    Inputs:
+    - ckpt_path: generator checkpoint path.
+    - n_per_class: number of samples per class.
+    - num_classes: total number of classes.
+    - device: torch device string.
+    - ddpm_steps: optional DDPM steps.
+
+    Outputs:
+    - x: ndarray [N, C, T] synthetic samples.
+    - y: ndarray [N] class labels.
+
+    Internal logic:
+    - Builds a repeated label vector and calls sample_from_generator.
+    """
     y = np.repeat(np.arange(num_classes, dtype=np.int64), int(n_per_class))
     x = sample_from_generator(ckpt_path, y, device=device, ddpm_steps=ddpm_steps)
     return x, y
@@ -38,20 +54,39 @@ def select_best_checkpoint(
     run_dir: Path,
     seed: int,
 ) -> dict[str, Any]:
+    """Select the best generator checkpoint using a proxy classifier on T_val.
+
+    Inputs:
+    - ckpt_paths: list of generator checkpoint paths.
+    - x_train/y_train: real train data [N, C, T] / [N].
+    - x_val/y_val: validation data [M, C, T] / [M].
+    - gen_cfg: generator config (includes selection settings).
+    - proxy_model_cfg: EEGNet config for proxy training.
+    - qc_cfg: QC config.
+    - num_classes: number of classes.
+    - run_dir: directory to save proxy artifacts.
+    - seed: RNG seed.
+
+    Outputs:
+    - dict with best_ckpt, per-ckpt scores, and metric name.
+
+    Internal logic:
+    - For each checkpoint: sample, optionally QC filter, quick-train EEGNet, score on val.
+    """
     ensure_dir(run_dir)
     ckpt_scores = []
 
     sel_cfg = gen_cfg.get("checkpoint_selection", {})
-    metric = str(sel_cfg.get("metric", "kappa"))
-    alpha_ratio_ref = float(sel_cfg.get("alpha_ratio_ref", 1.0))
-    sample_n_per_class = int(sel_cfg.get("sample_n_per_class", 50))
-    qc_enabled = bool(sel_cfg.get("qc_enabled", True))
-    overgen_buffer = float(sel_cfg.get("overgen_buffer", 1.2))
+    metric = str(sel_cfg.get("metric", "kappa"))  # validation metric to maximize
+    alpha_ratio_ref = float(sel_cfg.get("alpha_ratio_ref", 1.0))  # proxy alpha ratio
+    sample_n_per_class = int(sel_cfg.get("sample_n_per_class", 50))  # proxy samples per class
+    qc_enabled = bool(sel_cfg.get("qc_enabled", True))  # apply QC during proxy selection
+    overgen_buffer = float(sel_cfg.get("overgen_buffer", 1.2))  # oversampling buffer
 
     proxy_cfg = sel_cfg.get("proxy_classifier", {})
-    proxy_steps = int(proxy_cfg.get("steps", 120))
-    proxy_batch = int(proxy_cfg.get("batch_size", 64))
-    proxy_lr = float(proxy_cfg.get("lr", 1e-3))
+    proxy_steps = int(proxy_cfg.get("steps", 120))  # total proxy training steps
+    proxy_batch = int(proxy_cfg.get("batch_size", 64))  # proxy batch size
+    proxy_lr = float(proxy_cfg.get("lr", 1e-3))  # proxy learning rate
 
     qc_state = None
     if qc_enabled:

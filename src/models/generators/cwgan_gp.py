@@ -17,6 +17,20 @@ class CWGANGenerator(nn.Module):
         base_channels: int = 64,
         cond_dim: int = 16,
     ):
+        """Initialize conditional WGAN-GP generator.
+
+        Inputs:
+        - in_channels: EEG channels.
+        - time_steps: samples per trial.
+        - num_classes: number of classes.
+        - latent_dim/base_channels/cond_dim: architecture params.
+
+        Outputs:
+        - CWGANGenerator instance with embedding and transposed-conv decoder.
+
+        Internal logic:
+        - Projects latent+label embedding to a small temporal map then upsamples.
+        """
         super().__init__()
         self.in_channels = in_channels
         self.time_steps = time_steps
@@ -42,6 +56,18 @@ class CWGANGenerator(nn.Module):
         )
 
     def forward(self, z: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Generate samples from latent noise and labels.
+
+        Inputs:
+        - z: torch.Tensor [B, latent_dim]
+        - y: torch.Tensor [B] class labels
+
+        Outputs:
+        - x: torch.Tensor [B, C, T]
+
+        Internal logic:
+        - Concatenates z with label embedding and upsamples to target length.
+        """
         cond = self.class_embed(y)
         h = self.fc(torch.cat([z, cond], dim=1)).view(z.shape[0], -1, self.init_t)
         out = self.net(h)
@@ -51,6 +77,17 @@ class CWGANGenerator(nn.Module):
 
     @torch.no_grad()
     def sample(self, y: torch.Tensor) -> torch.Tensor:
+        """Sample using random z for given labels.
+
+        Inputs:
+        - y: torch.Tensor [B]
+
+        Outputs:
+        - x: torch.Tensor [B, C, T]
+
+        Internal logic:
+        - Draws standard normal z and calls forward().
+        """
         z = torch.randn(y.shape[0], self.latent_dim, device=y.device)
         return self.forward(z, y)
 
@@ -66,6 +103,20 @@ class CWGANCritic(nn.Module):
         base_channels: int = 64,
         cond_dim: int = 16,
     ):
+        """Initialize conditional critic for WGAN-GP.
+
+        Inputs:
+        - in_channels: EEG channels.
+        - time_steps: samples per trial.
+        - num_classes: number of classes.
+        - base_channels/cond_dim: architecture params.
+
+        Outputs:
+        - CWGANCritic instance with conv feature extractor and linear head.
+
+        Internal logic:
+        - Concatenates label embedding to input channels and downsamples.
+        """
         super().__init__()
         self.class_embed = nn.Embedding(num_classes, cond_dim)
 
@@ -84,6 +135,18 @@ class CWGANCritic(nn.Module):
         self.head = nn.Linear(feat_dim, 1)
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Score real/fake samples conditioned on labels.
+
+        Inputs:
+        - x: torch.Tensor [B, C, T]
+        - y: torch.Tensor [B]
+
+        Outputs:
+        - scores: torch.Tensor [B]
+
+        Internal logic:
+        - Embeds labels, concatenates to EEG, then applies conv + linear head.
+        """
         cond = self.class_embed(y).unsqueeze(-1).expand(-1, -1, x.shape[-1])
         z = self.feat(torch.cat([x, cond], dim=1)).flatten(1)
         return self.head(z).squeeze(1)

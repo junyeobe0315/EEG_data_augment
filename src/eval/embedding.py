@@ -13,6 +13,18 @@ from src.utils.io import ensure_dir
 
 
 def _extract_eegnet_features(model: EEGNet, xb: torch.Tensor) -> torch.Tensor:
+    """Extract feature embeddings from EEGNet.
+
+    Inputs:
+    - model: EEGNet model.
+    - xb: torch.Tensor [B, C, T].
+
+    Outputs:
+    - torch.Tensor [B, D] feature embeddings.
+
+    Internal logic:
+    - Uses EEGNet feature path when available, otherwise forward output.
+    """
     # EEGNet expects [B, C, T]
     if hasattr(model, "_forward_features"):
         return model._forward_features(xb.unsqueeze(1)).flatten(1)
@@ -21,6 +33,18 @@ def _extract_eegnet_features(model: EEGNet, xb: torch.Tensor) -> torch.Tensor:
 
 class FrozenEEGNetEmbedder:
     def __init__(self, ckpt_path: str | Path, device: str = "cpu"):
+        """Load a frozen EEGNet embedding model from checkpoint.
+
+        Inputs:
+        - ckpt_path: path to a saved EEGNet classifier checkpoint.
+        - device: torch device string.
+
+        Outputs:
+        - Embedder object with frozen model + normalizer.
+
+        Internal logic:
+        - Loads classifier checkpoint, rebuilds EEGNet, and freezes weights.
+        """
         self.ckpt_path = Path(ckpt_path)
         self.device = str(device)
         try:
@@ -29,7 +53,7 @@ class FrozenEEGNetEmbedder:
             ckpt = torch.load(self.ckpt_path, map_location=self.device)
         self.ckpt = ckpt
 
-        model_type = normalize_classifier_type(str(ckpt.get("model_type", "eegnet")))
+        model_type = normalize_classifier_type(str(ckpt.get("model_type", "eegnet")))  # ensure EEGNet
         if model_type != "eegnet":
             raise ValueError(f"Embedding checkpoint must be EEGNet, got: {model_type}")
 
@@ -54,10 +78,33 @@ class FrozenEEGNetEmbedder:
         self.normalizer = ZScoreNormalizer.from_state(ckpt["normalizer"])
 
     def normalize(self, x: np.ndarray) -> np.ndarray:
+        """Apply the stored normalizer to raw EEG.
+
+        Inputs:
+        - x: ndarray [N, C, T]
+
+        Outputs:
+        - normalized ndarray [N, C, T]
+
+        Internal logic:
+        - Delegates to the stored ZScoreNormalizer from the checkpoint.
+        """
         return self.normalizer.transform(x)
 
     @torch.no_grad()
     def transform(self, x: np.ndarray, batch_size: int = 256) -> np.ndarray:
+        """Transform EEG into embedding features.
+
+        Inputs:
+        - x: ndarray [N, C, T]
+        - batch_size: inference batch size.
+
+        Outputs:
+        - ndarray [N, D] embeddings.
+
+        Internal logic:
+        - Runs forward passes in batches and concatenates feature vectors.
+        """
         feats = []
         for st in range(0, x.shape[0], batch_size):
             ed = min(st + batch_size, x.shape[0])
@@ -78,6 +125,22 @@ def train_embedding_eegnet(
     normalizer_state: dict,
     num_classes: int,
 ) -> Path:
+    """Train EEGNet on real data and return checkpoint path for embedding.
+
+    Inputs:
+    - x_train/y_train: training data [N, C, T] / [N]
+    - x_val/y_val: validation data [M, C, T] / [M]
+    - model_cfg/train_cfg: EEGNet configs
+    - run_dir: output directory
+    - normalizer_state: fitted normalizer state
+    - num_classes: number of classes
+
+    Outputs:
+    - Path to saved checkpoint (ckpt.pt).
+
+    Internal logic:
+    - Calls the classifier training loop with C0 settings and returns its checkpoint.
+    """
     run_dir = ensure_dir(run_dir)
     _ = train_classifier(
         x_train=x_train,

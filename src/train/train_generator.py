@@ -16,6 +16,18 @@ from src.utils.seed import set_global_seed
 
 
 def _apply_cuda_speed(train_cfg: Dict, device: torch.device) -> None:
+    """Apply CUDA speed settings for generator training.
+
+    Inputs:
+    - train_cfg: generator training config dict.
+    - device: torch.device for training.
+
+    Outputs:
+    - None (modifies torch backend flags).
+
+    Internal logic:
+    - Enables TF32 and matmul precision hints when running on CUDA.
+    """
     if device.type != "cuda":
         return
     cuda_cfg = train_cfg.get("cuda", {}) if isinstance(train_cfg, dict) else {}
@@ -28,6 +40,17 @@ def _apply_cuda_speed(train_cfg: Dict, device: torch.device) -> None:
 
 
 def _resolve_device(train_cfg: dict) -> torch.device:
+    """Resolve training device from config.
+
+    Inputs:
+    - train_cfg: generator training config dict (device key).
+
+    Outputs:
+    - torch.device for training.
+
+    Internal logic:
+    - Returns CUDA when available and device is "auto", otherwise uses config.
+    """
     req = str(train_cfg.get("device", "auto"))
     if req == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -44,6 +67,23 @@ def _save_ckpt(
     train_cfg: dict,
     shape: dict,
 ) -> None:
+    """Serialize generator/critic checkpoint to disk.
+
+    Inputs:
+    - ckpt_path: output checkpoint path.
+    - model_type: generator type string.
+    - gen: generator module.
+    - critic: optional critic module.
+    - epoch: current epoch index.
+    - model_cfg/train_cfg: config dicts saved for reproducibility.
+    - shape: dict with data shape metadata.
+
+    Outputs:
+    - None (writes torch checkpoint).
+
+    Internal logic:
+    - Packages states and metadata into a dict and calls torch.save.
+    """
     payload = {
         "model_type": model_type,
         "gen_state": gen.state_dict(),
@@ -65,7 +105,21 @@ def train_generator(
     run_dir: Path,
     seed: int,
 ) -> dict[str, Any]:
-    """Train generator on (x_train, y_train). Returns dict with ckpt paths."""
+    """Train generator on (x_train, y_train).
+
+    Inputs:
+    - x_train/y_train: real training data [N, C, T] / [N].
+    - model_type/model_cfg: generator selection and hyperparameters.
+    - train_cfg: training config (epochs, lr, batch_size, etc.).
+    - run_dir: output directory for checkpoints and logs.
+    - seed: RNG seed for reproducibility.
+
+    Outputs:
+    - dict with ckpt paths, runtime, model_type, and shape metadata.
+
+    Internal logic:
+    - Builds generator/critic, trains by type (cwgan_gp or ddpm), and saves checkpoints.
+    """
     ensure_dir(run_dir)
     set_global_seed(seed)
 
@@ -73,18 +127,29 @@ def train_generator(
     _apply_cuda_speed(train_cfg, device)
 
     model_type = normalize_generator_type(model_type)
-    in_channels = int(x_train.shape[1])
-    time_steps = int(x_train.shape[2])
-    num_classes = int(np.max(y_train)) + 1
+    in_channels = int(x_train.shape[1])  # EEG channels
+    time_steps = int(x_train.shape[2])  # time samples per trial
+    num_classes = int(np.max(y_train)) + 1  # number of classes
 
     gen = build_generator(model_type, in_channels, time_steps, num_classes, model_cfg).to(device)
     critic = build_critic(model_type, in_channels, time_steps, num_classes, model_cfg)
     if critic is not None:
         critic = critic.to(device)
 
-    batch_size = int(train_cfg.get("batch_size", 32))
-    num_workers = int(train_cfg.get("num_workers", 0))
+    batch_size = int(train_cfg.get("batch_size", 32))  # training batch size
+    num_workers = int(train_cfg.get("num_workers", 0))  # dataloader workers
     def _seed_worker(worker_id: int) -> None:
+        """Seed a DataLoader worker for deterministic shuffling.
+
+        Inputs:
+        - worker_id: integer worker index.
+
+        Outputs:
+        - None (sets NumPy seed for worker).
+
+        Internal logic:
+        - Uses torch.initial_seed to derive per-worker NumPy seed.
+        """
         seed = torch.initial_seed() % 2**32
         np.random.seed(seed + worker_id)
 
@@ -97,24 +162,37 @@ def train_generator(
         worker_init_fn=_seed_worker if num_workers > 0 else None,
     )
 
-    epochs = int(train_cfg.get("epochs", 200))
-    lr = float(train_cfg.get("lr", 2e-4))
-    weight_decay = float(train_cfg.get("weight_decay", 0.0))
+    epochs = int(train_cfg.get("epochs", 200))  # training epochs
+    lr = float(train_cfg.get("lr", 2e-4))  # learning rate
+    weight_decay = float(train_cfg.get("weight_decay", 0.0))  # L2 regularization
 
-    save_every = int(train_cfg.get("save_every", max(1, epochs // 5)))
+    save_every = int(train_cfg.get("save_every", max(1, epochs // 5)))  # ckpt interval
 
     log_rows = []
     ckpts = []
     start_time = time.time()
 
     if model_type == "cwgan_gp":
-        n_critic = int(train_cfg.get("n_critic", 3))
-        lambda_gp = float(train_cfg.get("lambda_gp", 10.0))
+        n_critic = int(train_cfg.get("n_critic", 3))  # critic updates per step
+        lambda_gp = float(train_cfg.get("lambda_gp", 10.0))  # gradient penalty weight
         betas = train_cfg.get("betas", [0.5, 0.9])
         gen_opt = torch.optim.Adam(gen.parameters(), lr=lr, betas=tuple(betas), weight_decay=weight_decay)
         cri_opt = torch.optim.Adam(critic.parameters(), lr=lr, betas=tuple(betas), weight_decay=weight_decay)
 
         def _gradient_penalty(real: torch.Tensor, fake: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+            """Compute WGAN-GP gradient penalty.
+
+            Inputs:
+            - real: torch.Tensor [B, C, T] real samples.
+            - fake: torch.Tensor [B, C, T] generated samples.
+            - y: torch.Tensor [B] labels.
+
+            Outputs:
+            - scalar penalty tensor.
+
+            Internal logic:
+            - Interpolates real/fake, computes critic gradients, and penalizes norm.
+            """
             eps = torch.rand(real.size(0), 1, 1, device=real.device)
             inter = eps * real + (1.0 - eps) * fake
             inter.requires_grad_(True)
@@ -237,7 +315,20 @@ def sample_from_generator(
     device: str = "cpu",
     ddpm_steps: int | None = None,
 ) -> np.ndarray:
-    """Sample synthetic data given a generator checkpoint and label array."""
+    """Sample synthetic data given a generator checkpoint and label array.
+
+    Inputs:
+    - ckpt_path: path to generator checkpoint.
+    - y: ndarray [N] class labels to condition on.
+    - device: torch device string for sampling.
+    - ddpm_steps: optional number of DDPM sampling steps.
+
+    Outputs:
+    - ndarray [N, C, T] synthetic samples.
+
+    Internal logic:
+    - Rebuilds generator from checkpoint, runs conditional sampling, returns numpy.
+    """
     try:
         ckpt = torch.load(Path(ckpt_path), map_location=device, weights_only=False)
     except TypeError:

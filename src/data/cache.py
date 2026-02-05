@@ -10,6 +10,19 @@ from src.utils.io import ensure_dir
 
 
 def prepare_preprocessed_cache(dataset_cfg: dict, preprocess_cfg: dict) -> Path:
+    """Prepare cached .npz files and index.csv for the dataset.
+
+    Inputs:
+    - dataset_cfg: dict with raw_dir, processed_dir, subjects, channels, etc.
+    - preprocess_cfg: dict with filter/resample settings.
+
+    Outputs:
+    - Path to the generated index.csv.
+
+    Internal logic:
+    - Iterates over GDF files, extracts trials, writes per-session .npz,
+      and aggregates metadata into a single index CSV.
+    """
     raw_dir = Path(dataset_cfg["raw_dir"])
     if not raw_dir.exists() and Path("./BCICIV_2a_gdf").exists():
         raw_dir = Path("./BCICIV_2a_gdf")
@@ -17,7 +30,7 @@ def prepare_preprocessed_cache(dataset_cfg: dict, preprocess_cfg: dict) -> Path:
     true_labels_dir = Path(dataset_cfg.get("true_labels_dir", "./data/raw/true_labels"))
     require_eval_labels = bool(dataset_cfg.get("require_eval_labels", True))
 
-    processed_dir = ensure_dir(dataset_cfg["processed_dir"])
+    processed_dir = ensure_dir(dataset_cfg["processed_dir"])  # output cache dir
 
     rows = []
     for gdf in sorted(raw_dir.glob("A*.gdf")):

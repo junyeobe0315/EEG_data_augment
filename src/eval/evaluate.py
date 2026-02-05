@@ -8,6 +8,20 @@ from src.models.classifiers.base import is_sklearn_model
 
 
 def evaluate_classifier(model, x: np.ndarray, y: np.ndarray, device: str = "cpu") -> dict[str, float]:
+    """Evaluate a classifier on X/y.
+
+    Inputs:
+    - model: torch model or sklearn-like classifier.
+    - x: ndarray [N, C, T]
+    - y: ndarray [N]
+    - device: torch device string.
+
+    Outputs:
+    - metrics dict with acc/kappa/macro_f1/etc.
+
+    Internal logic:
+    - Uses sklearn predict path when applicable, otherwise torch batch inference.
+    """
     if is_sklearn_model(getattr(model, "model_type", "svm")):
         pred = model.predict(x)
         return compute_metrics(y, pred)

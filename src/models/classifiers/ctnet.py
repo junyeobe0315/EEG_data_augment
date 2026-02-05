@@ -28,6 +28,21 @@ class CTNet(nn.Module):
         pos_dropout: float = 0.1,
         ff_mult: int = 4,
     ):
+        """Initialize CTNet model.
+
+        Inputs:
+        - n_ch/n_t: input channels and time length.
+        - n_classes: number of classes.
+        - emb_size/n_heads/n_layers: transformer params.
+        - f1/d/kernel_length/sep_kernel_length/pool1/pool2: conv params.
+        - dropout/pos_dropout/ff_mult: regularization params.
+
+        Outputs:
+        - CTNet instance with patch embedder, transformer encoder, and classifier head.
+
+        Internal logic:
+        - Builds EEGNet-style temporal/spatial conv patching then transformer encoding.
+        """
         super().__init__()
         f2 = f1 * d
         self.emb_size = int(emb_size)
@@ -62,6 +77,17 @@ class CTNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through CTNet.
+
+        Inputs:
+        - x: torch.Tensor [B, C, T]
+
+        Outputs:
+        - logits: torch.Tensor [B, K]
+
+        Internal logic:
+        - Creates patch tokens, adds positional embeddings, encodes, and classifies.
+        """
         z = self.patch(x.unsqueeze(1)).squeeze(2).transpose(1, 2)  # [B, L, E]
         z = z * math.sqrt(self.emb_size)
         z = self.pos_drop(z + self.pos_embed[:, : z.shape[1], :])
@@ -70,6 +96,19 @@ class CTNet(nn.Module):
 
 
 def build_ctnet(cfg: dict, n_ch: int, n_t: int, n_classes: int) -> CTNet:
+    """Construct CTNet from config dict.
+
+    Inputs:
+    - cfg: model config dict.
+    - n_ch/n_t: input shape.
+    - n_classes: output classes.
+
+    Outputs:
+    - CTNet instance.
+
+    Internal logic:
+    - Maps config dict fields to CTNet constructor arguments.
+    """
     return CTNet(
         n_ch=n_ch,
         n_t=n_t,

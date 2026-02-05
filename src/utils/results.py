@@ -63,11 +63,33 @@ RESULT_COLUMNS = [
 
 
 def make_run_id(values: dict[str, Any]) -> str:
+    """Create a deterministic run_id from primary key fields.
+
+    Inputs:
+    - values: dict with keys in PRIMARY_KEY_FIELDS.
+
+    Outputs:
+    - short SHA-256 hex string.
+
+    Internal logic:
+    - Concatenates primary key values in order and hashes the string.
+    """
     key = "|".join(str(values.get(k, "")) for k in PRIMARY_KEY_FIELDS)
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
 def load_results(path: str | Path) -> pd.DataFrame:
+    """Load results.csv if it exists.
+
+    Inputs:
+    - path: results file path.
+
+    Outputs:
+    - DataFrame (empty if file missing).
+
+    Internal logic:
+    - Returns empty DataFrame when file is absent to simplify callers.
+    """
     p = Path(path)
     if not p.exists():
         return pd.DataFrame()
@@ -75,6 +97,18 @@ def load_results(path: str | Path) -> pd.DataFrame:
 
 
 def has_primary_key(df: pd.DataFrame, row: dict[str, Any]) -> bool:
+    """Check if a row with the same primary key already exists.
+
+    Inputs:
+    - df: existing results DataFrame.
+    - row: candidate result row.
+
+    Outputs:
+    - True if primary key matches an existing row.
+
+    Internal logic:
+    - Builds a boolean mask over PK columns and checks any match.
+    """
     if df.empty:
         return False
     mask = None
@@ -88,6 +122,18 @@ def has_primary_key(df: pd.DataFrame, row: dict[str, Any]) -> bool:
 
 
 def _normalize_row(row: dict[str, Any], columns: list[str]) -> dict[str, Any]:
+    """Normalize a row to match a target column list.
+
+    Inputs:
+    - row: raw row dict.
+    - columns: desired column ordering.
+
+    Outputs:
+    - dict with all columns filled (missing -> NaN).
+
+    Internal logic:
+    - Fills missing columns with NaN to maintain a fixed schema.
+    """
     out = {}
     for col in columns:
         val = row.get(col, np.nan)
@@ -96,6 +142,18 @@ def _normalize_row(row: dict[str, Any], columns: list[str]) -> dict[str, Any]:
 
 
 def append_result(path: str | Path, row: dict[str, Any]) -> bool:
+    """Append a row to results.csv with primary-key skipping.
+
+    Inputs:
+    - path: results file path.
+    - row: result row dict.
+
+    Outputs:
+    - True if row appended, False if skipped due to PK collision.
+
+    Internal logic:
+    - Loads/extends columns, normalizes the row, then appends or creates file.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
 

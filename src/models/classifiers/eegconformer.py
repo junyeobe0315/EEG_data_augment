@@ -25,6 +25,21 @@ class EEGConformer(nn.Module):
         fc1: int = 256,
         fc2: int = 32,
     ):
+        """Initialize EEGConformer model.
+
+        Inputs:
+        - n_ch/n_t: input channels and time length.
+        - n_classes: number of classes.
+        - conv_channels/emb_size/n_heads/n_layers/dropout: architecture params.
+        - temporal_kernel/pool_kernel/pool_stride: patch embedding params.
+        - fc1/fc2: classifier head sizes.
+
+        Outputs:
+        - EEGConformer instance with patch embedder, transformer, and head.
+
+        Internal logic:
+        - Builds shallow conv patching, transformer encoder, and MLP head.
+        """
         super().__init__()
         self.patch = nn.Sequential(
             nn.Conv2d(1, conv_channels, kernel_size=(1, temporal_kernel), stride=(1, 1), bias=False),
@@ -53,6 +68,17 @@ class EEGConformer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through EEGConformer.
+
+        Inputs:
+        - x: torch.Tensor [B, C, T]
+
+        Outputs:
+        - logits: torch.Tensor [B, K]
+
+        Internal logic:
+        - Creates patch tokens, encodes with transformer, then flattens to head.
+        """
         z = self.patch(x.unsqueeze(1)).squeeze(2)  # [B, E, L]
         z = z.transpose(1, 2)  # [B, L, E]
         z = self.encoder(z)
@@ -60,6 +86,19 @@ class EEGConformer(nn.Module):
 
 
 def build_eegconformer(cfg: dict, n_ch: int, n_t: int, n_classes: int) -> EEGConformer:
+    """Construct EEGConformer from config dict.
+
+    Inputs:
+    - cfg: model config dict.
+    - n_ch/n_t: input shape.
+    - n_classes: output classes.
+
+    Outputs:
+    - EEGConformer instance.
+
+    Internal logic:
+    - Maps config dict fields to EEGConformer constructor arguments.
+    """
     return EEGConformer(
         n_ch=n_ch,
         n_t=n_t,

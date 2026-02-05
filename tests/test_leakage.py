@@ -7,6 +7,19 @@ from src.qc.qc_pipeline import fit_qc
 
 
 def test_normalizer_fit_scope() -> None:
+    """Check that normalization is fit on train data only.
+
+    Inputs:
+    - x_train: constant-valued training data.
+    - x_test: constant-valued test data with a different mean.
+
+    Outputs:
+    - Asserts training data normalizes to mean 0.
+    - Asserts test data shifts by -(1/eps) due to zero std.
+
+    Internal logic:
+    - Fits on constant train data then checks transform behavior on train/test.
+    """
     x_train = np.ones((10, 2, 3), dtype=np.float32)
     x_test = np.zeros((10, 2, 3), dtype=np.float32)
     norm = ZScoreNormalizer().fit(x_train)
@@ -19,6 +32,17 @@ def test_normalizer_fit_scope() -> None:
 
 
 def test_qc_fit_scope() -> None:
+    """Ensure QC statistics can be fit without leaking test data.
+
+    Inputs:
+    - Small synthetic x_train/y_train arrays.
+
+    Outputs:
+    - Asserts QC state contains expected PSD/Cov entries.
+
+    Internal logic:
+    - Fits QC on random data and verifies expected keys exist.
+    """
     x_train = np.random.randn(8, 2, 50).astype(np.float32)
     y_train = np.array([0, 0, 0, 0, 1, 1, 1, 1])
     qc_cfg = {

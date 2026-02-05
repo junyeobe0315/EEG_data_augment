@@ -9,6 +9,20 @@ from src.qc.cov_qc import fit_cov_stats, cov_distance
 
 
 def fit_qc(real_x: np.ndarray, real_y: np.ndarray, sfreq: int, cfg: Dict) -> dict:
+    """Fit QC statistics from real training data.
+
+    Inputs:
+    - real_x: ndarray [N, C, T]
+    - real_y: ndarray [N]
+    - sfreq: sampling rate
+    - cfg: QC configuration dict
+
+    Outputs:
+    - state dict containing PSD and covariance references per class.
+
+    Internal logic:
+    - Computes per-class PSD stats and covariance thresholds based on config.
+    """
     classes = np.unique(real_y).tolist()
     state = {"psd": {}, "cov": {}, "classes": classes}
 
@@ -30,9 +44,26 @@ def fit_qc(real_x: np.ndarray, real_y: np.ndarray, sfreq: int, cfg: Dict) -> dic
 
 
 def filter_qc(synth_x: np.ndarray, synth_y: np.ndarray, sfreq: int, cfg: Dict, state: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Filter synthetic samples using fitted QC rules.
+
+    Inputs:
+    - synth_x: ndarray [N, C, T]
+    - synth_y: ndarray [N]
+    - sfreq: sampling rate
+    - cfg: QC configuration dict
+    - state: fitted QC state
+
+    Outputs:
+    - mask: boolean array [N] indicating pass/fail
+    - score: float array [N] of QC scores
+
+    Internal logic:
+    - Applies PSD z-score thresholds and covariance distance thresholds,
+      then optionally relaxes to keep a minimum ratio.
+    """
     n = int(synth_x.shape[0])
-    mask = np.ones(n, dtype=bool)
-    score = np.zeros(n, dtype=np.float64)
+    mask = np.ones(n, dtype=bool)  # pass/fail mask
+    score = np.zeros(n, dtype=np.float64)  # aggregate QC score
 
     classes = state.get("classes", np.unique(synth_y).tolist())
     for cls in classes:

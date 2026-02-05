@@ -6,7 +6,18 @@ from src.qc.qc_pipeline import filter_qc
 
 
 def compute_target_counts(y_real: np.ndarray, alpha_ratio: float) -> dict[int, int]:
-    """Compute per-class synthetic target counts given alpha_ratio = N_synth / N_real."""
+    """Compute per-class synthetic target counts given alpha_ratio = N_synth / N_real.
+
+    Inputs:
+    - y_real: ndarray [N] of real labels.
+    - alpha_ratio: synth:real ratio.
+
+    Outputs:
+    - dict mapping class -> target synthetic count.
+
+    Internal logic:
+    - Counts per-class labels and multiplies by alpha_ratio with rounding.
+    """
     y_real = y_real.astype(np.int64)
     n_classes = int(y_real.max()) + 1
     counts = np.bincount(y_real, minlength=n_classes)
@@ -24,14 +35,30 @@ def build_synthetic_with_qc(
     sfreq: int,
     buffer: float = 1.2,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Generate synthetic data per class with optional QC filtering and oversampling."""
+    """Generate synthetic data per class with optional QC filtering and oversampling.
+
+    Inputs:
+    - sample_fn(cls, n): function returning synthetic X [n, C, T] for class cls.
+    - target_counts: dict class -> target count.
+    - qc_state/qc_cfg: QC parameters (optional).
+    - sfreq: sampling rate for QC feature extraction.
+    - buffer: oversampling buffer ratio.
+
+    Outputs:
+    - X_syn: ndarray [N_syn, C, T]
+    - y_syn: ndarray [N_syn]
+    - report: dict with counts, pass_rate, oversample_factor.
+
+    Internal logic:
+    - Repeatedly samples per class until targets met or max attempts reached.
+    """
     xs = []
     ys = []
     report = {"class_counts_target": {}, "class_counts_actual": {}, "oversample_factor": 1.0}
 
-    total_target = int(sum(target_counts.values()))
-    max_attempt_factor = float(qc_cfg.get("max_attempt_factor", 3.0))
-    max_attempts = max(1, int(np.ceil(max_attempt_factor * total_target)))
+    total_target = int(sum(target_counts.values()))  # total required synthetic samples
+    max_attempt_factor = float(qc_cfg.get("max_attempt_factor", 3.0))  # oversample cap multiplier
+    max_attempts = max(1, int(np.ceil(max_attempt_factor * total_target)))  # hard attempt cap
 
     total_attempted = 0
     total_kept = 0
@@ -96,7 +123,17 @@ def build_synthetic_pool(
     sfreq: int,
     buffer: float = 1.2,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Build a reusable synthetic pool (optionally QC-filtered)."""
+    """Build a reusable synthetic pool (optionally QC-filtered).
+
+    Inputs:
+    - same as build_synthetic_with_qc.
+
+    Outputs:
+    - pooled X/Y arrays and report dict with pool_size.
+
+    Internal logic:
+    - Delegates to build_synthetic_with_qc once and annotates pool size.
+    """
     x_pool, y_pool, report = build_synthetic_with_qc(
         sample_fn=sample_fn,
         target_counts=target_counts,
@@ -115,7 +152,19 @@ def select_from_pool(
     target_counts: dict[int, int],
     seed: int,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Select class-wise subsets from a synthetic pool for a specific alpha_ratio."""
+    """Select class-wise subsets from a synthetic pool for a specific alpha_ratio.
+
+    Inputs:
+    - x_pool/y_pool: pooled synthetic samples.
+    - target_counts: dict class -> desired count.
+    - seed: RNG seed for deterministic selection.
+
+    Outputs:
+    - X/Y subsets and a report dict with pool usage.
+
+    Internal logic:
+    - Samples without replacement per class; marks pool_exhausted if insufficient.
+    """
     rng = np.random.default_rng(int(seed))
     xs = []
     ys = []
@@ -153,7 +202,19 @@ def select_indices_from_pool(
     target_counts: dict[int, int],
     seed: int,
 ) -> tuple[np.ndarray, dict]:
-    """Select indices from a pool without materializing data."""
+    """Select indices from a pool without materializing data.
+
+    Inputs:
+    - y_pool: labels for pooled synthetic samples.
+    - target_counts: dict class -> desired count.
+    - seed: RNG seed.
+
+    Outputs:
+    - indices array into pool and a report dict.
+
+    Internal logic:
+    - Mirrors select_from_pool but returns indices only for later slicing.
+    """
     rng = np.random.default_rng(int(seed))
     indices = []
     report = {

@@ -9,6 +9,20 @@ def apply_traditional_augment(
     max_time_shift: int = 20,
     channel_dropout_prob: float = 0.1,
 ) -> np.ndarray:
+    """Apply simple traditional augmentations to EEG trials.
+
+    Inputs:
+    - x: ndarray [N, C, T] float32.
+    - noise_std: std of Gaussian noise added to signals.
+    - max_time_shift: max circular shift in samples along time axis.
+    - channel_dropout_prob: probability of dropping a channel per sample.
+
+    Outputs:
+    - augmented ndarray [N, C, T] float32.
+
+    Internal logic:
+    - Adds noise, randomly shifts in time, and drops channels.
+    """
     out = x.copy().astype(np.float32)
 
     if noise_std > 0:

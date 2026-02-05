@@ -21,6 +21,21 @@ class EEGNet(nn.Module):
         max_norm_depthwise: float = 1.0,
         max_norm_linear: float = 0.25,
     ):
+        """Initialize EEGNet model.
+
+        Inputs:
+        - n_ch: number of EEG channels.
+        - n_t: number of time samples per trial.
+        - n_classes: number of output classes.
+        - f1/d/f2/kernel_length/sep_kernel_length/dropout: EEGNet hyperparams.
+        - max_norm_depthwise/max_norm_linear: max-norm constraints.
+
+        Outputs:
+        - EEGNet instance with conv feature extractor and linear classifier.
+
+        Internal logic:
+        - Builds temporal, spatial, and separable conv stacks then infers feature dim.
+        """
         super().__init__()
         self.max_norm_depthwise = float(max_norm_depthwise)
         self.max_norm_linear = float(max_norm_linear)
@@ -54,6 +69,19 @@ class EEGNet(nn.Module):
 
     @staticmethod
     def _apply_max_norm_conv2d(weight: torch.Tensor, max_norm: float, dim: int = 0) -> None:
+        """Apply max-norm constraint to convolution weights.
+
+        Inputs:
+        - weight: conv weight tensor.
+        - max_norm: maximum L2 norm.
+        - dim: dimension for norm computation.
+
+        Outputs:
+        - None (in-place weight constraint).
+
+        Internal logic:
+        - Scales weights so their L2 norm along dim does not exceed max_norm.
+        """
         if max_norm <= 0:
             return
         with torch.no_grad():
@@ -64,6 +92,18 @@ class EEGNet(nn.Module):
 
     @staticmethod
     def _apply_max_norm_linear(weight: torch.Tensor, max_norm: float) -> None:
+        """Apply max-norm constraint to linear layer weights.
+
+        Inputs:
+        - weight: linear weight tensor.
+        - max_norm: maximum L2 norm.
+
+        Outputs:
+        - None (in-place weight constraint).
+
+        Internal logic:
+        - Scales linear weights so column norms are clipped to max_norm.
+        """
         if max_norm <= 0:
             return
         with torch.no_grad():
@@ -73,6 +113,17 @@ class EEGNet(nn.Module):
             weight.data = w * (desired / (norm + 1e-8))
 
     def _forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through feature extractor layers.
+
+        Inputs:
+        - x: torch.Tensor [B, 1, C, T]
+
+        Outputs:
+        - feature map tensor.
+
+        Internal logic:
+        - Applies temporal/spatial convs, pooling, and separable conv stack.
+        """
         self._apply_max_norm_conv2d(self.spatial.weight, self.max_norm_depthwise, dim=1)
         z = self.temporal(x)
         z = self.bn1(z)
@@ -92,13 +143,36 @@ class EEGNet(nn.Module):
         return z
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, C, T]
+        """Forward pass through EEGNet classifier.
+
+        Inputs:
+        - x: torch.Tensor [B, C, T]
+
+        Outputs:
+        - logits: torch.Tensor [B, K]
+
+        Internal logic:
+        - Applies feature extractor and a linear classifier with max-norm constraint.
+        """
         self._apply_max_norm_linear(self.classifier.weight, self.max_norm_linear)
         z = self._forward_features(x.unsqueeze(1)).flatten(1)
         return self.classifier(z)
 
 
 def build_eegnet(cfg: dict, n_ch: int, n_t: int, n_classes: int) -> EEGNet:
+    """Construct EEGNet from a config dict.
+
+    Inputs:
+    - cfg: model config dict.
+    - n_ch/n_t: input shape.
+    - n_classes: output classes.
+
+    Outputs:
+    - EEGNet instance.
+
+    Internal logic:
+    - Maps config dict fields to EEGNet constructor arguments.
+    """
     return EEGNet(
         n_ch=n_ch,
         n_t=n_t,

@@ -6,6 +6,17 @@ from src.utils.results import append_result, load_results, make_run_id
 
 
 def test_results_primary_key_skip(tmp_path: Path) -> None:
+    """Ensure primary-key collisions are skipped when appending results.
+
+    Inputs:
+    - tmp_path: pytest temp directory for isolated file IO.
+
+    Outputs:
+    - Asserts only one row is stored for duplicate primary keys.
+
+    Internal logic:
+    - Append the same row twice and verify the second append is skipped.
+    """
     path = tmp_path / "results.csv"
     row = {
         "subject": 1,

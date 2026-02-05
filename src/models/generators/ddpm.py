@@ -6,6 +6,18 @@ from torch import nn
 
 
 def _sinusoidal_time_embedding(t: torch.Tensor, dim: int) -> torch.Tensor:
+    """Compute sinusoidal time embeddings.
+
+    Inputs:
+    - t: torch.Tensor [B] timesteps
+    - dim: embedding dimension
+
+    Outputs:
+    - torch.Tensor [B, dim]
+
+    Internal logic:
+    - Uses log-spaced frequencies and concatenates sin/cos components.
+    """
     device = t.device
     half = dim // 2
     freqs = torch.exp(-math.log(10000) * torch.arange(0, half, device=device, dtype=torch.float32) / half)
@@ -18,6 +30,18 @@ def _sinusoidal_time_embedding(t: torch.Tensor, dim: int) -> torch.Tensor:
 
 class _ResidualBlock1D(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, cond_dim: int):
+        """Initialize a conditional residual block.
+
+        Inputs:
+        - in_ch/out_ch: input/output channels.
+        - cond_dim: conditioning vector dimension.
+
+        Outputs:
+        - Residual block module with conditional projection.
+
+        Internal logic:
+        - Builds two conv layers with GroupNorm and a conditional affine add.
+        """
         super().__init__()
         self.norm1 = nn.GroupNorm(8, in_ch)
         self.act1 = nn.SiLU()
@@ -31,6 +55,18 @@ class _ResidualBlock1D(nn.Module):
         self.skip = nn.Conv1d(in_ch, out_ch, kernel_size=1) if in_ch != out_ch else nn.Identity()
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """Forward pass with conditional modulation.
+
+        Inputs:
+        - x: torch.Tensor [B, C, T]
+        - cond: torch.Tensor [B, cond_dim]
+
+        Outputs:
+        - torch.Tensor [B, out_ch, T]
+
+        Internal logic:
+        - Applies convs with conditional bias and adds a skip connection.
+        """
         h = self.conv1(self.act1(self.norm1(x)))
         h = h + self.cond_proj(cond).unsqueeze(-1)
         h = self.conv2(self.act2(self.norm2(h)))
@@ -39,6 +75,20 @@ class _ResidualBlock1D(nn.Module):
 
 class _CondUNet1D(nn.Module):
     def __init__(self, in_channels: int, num_classes: int, base_channels: int = 64, time_dim: int = 128):
+        """Initialize conditional 1D U-Net for noise prediction.
+
+        Inputs:
+        - in_channels: EEG channels.
+        - num_classes: number of classes.
+        - base_channels: base feature width.
+        - time_dim: time embedding dimension.
+
+        Outputs:
+        - Conditional U-Net module.
+
+        Internal logic:
+        - Builds down/up-sampling path with conditional residual blocks.
+        """
         super().__init__()
         self.time_dim = time_dim
         self.cls_embed = nn.Embedding(num_classes, time_dim)
@@ -71,6 +121,19 @@ class _CondUNet1D(nn.Module):
         )
 
     def forward(self, x: torch.Tensor, t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Forward pass of conditional U-Net.
+
+        Inputs:
+        - x: torch.Tensor [B, C, T]
+        - t: torch.Tensor [B] timesteps
+        - y: torch.Tensor [B] class labels
+
+        Outputs:
+        - torch.Tensor [B, C, T] predicted noise
+
+        Internal logic:
+        - Encodes with down blocks, decodes with skip connections, outputs noise.
+        """
         temb = self.time_mlp(_sinusoidal_time_embedding(t, self.time_dim))
         cond = temb + self.cls_embed(y)
 
@@ -110,6 +173,19 @@ class ConditionalDDPM1D(nn.Module):
         beta_start: float = 1e-4,
         beta_end: float = 0.02,
     ):
+        """Initialize conditional DDPM.
+
+        Inputs:
+        - in_channels/time_steps/num_classes: data shape info
+        - base_channels/time_dim: network sizes
+        - diffusion_steps/beta_start/beta_end: diffusion schedule
+
+        Outputs:
+        - ConditionalDDPM1D instance with registered diffusion buffers.
+
+        Internal logic:
+        - Constructs the epsilon model and precomputes diffusion coefficients.
+        """
         super().__init__()
         self.in_channels = in_channels
         self.time_steps = time_steps
@@ -134,11 +210,36 @@ class ConditionalDDPM1D(nn.Module):
         self.register_buffer("sqrt_one_minus_alpha_bar", torch.sqrt(1.0 - alpha_bar))
 
     def _q_sample(self, x0: torch.Tensor, t: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
+        """Diffusion forward process q(x_t | x_0).
+
+        Inputs:
+        - x0: clean data [B, C, T]
+        - t: timesteps [B]
+        - noise: noise tensor [B, C, T]
+
+        Outputs:
+        - x_t: noisy sample [B, C, T]
+
+        Internal logic:
+        - Uses precomputed sqrt(alpha_bar) and sqrt(1-alpha_bar) coefficients.
+        """
         c1 = self.sqrt_alpha_bar[t].view(-1, 1, 1)
         c2 = self.sqrt_one_minus_alpha_bar[t].view(-1, 1, 1)
         return c1 * x0 + c2 * noise
 
     def loss(self, x0: torch.Tensor, y: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Compute DDPM training loss.
+
+        Inputs:
+        - x0: clean data [B, C, T]
+        - y: class labels [B]
+
+        Outputs:
+        - dict with "loss" tensor.
+
+        Internal logic:
+        - Samples a timestep, adds noise, predicts it, and computes MSE.
+        """
         b = x0.shape[0]
         t = torch.randint(0, self.diffusion_steps, (b,), device=x0.device)
         noise = torch.randn_like(x0)
@@ -149,6 +250,18 @@ class ConditionalDDPM1D(nn.Module):
 
     @torch.no_grad()
     def sample(self, y: torch.Tensor, num_steps: int | None = None) -> torch.Tensor:
+        """Generate samples by reverse diffusion.
+
+        Inputs:
+        - y: class labels [B]
+        - num_steps: number of reverse steps (optional).
+
+        Outputs:
+        - x: generated samples [B, C, T]
+
+        Internal logic:
+        - Iteratively denoises from pure noise using the learned epsilon model.
+        """
         if num_steps is None:
             num_steps = self.diffusion_steps
         num_steps = min(num_steps, self.diffusion_steps)

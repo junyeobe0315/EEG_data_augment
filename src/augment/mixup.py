@@ -9,6 +9,21 @@ def mixup_batch(
     alpha: float,
     num_classes: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Apply mixup to a batch.
+
+    Inputs:
+    - x: ndarray [N, C, T] float32.
+    - y: ndarray [N] int labels.
+    - alpha: mixup Beta distribution parameter.
+    - num_classes: number of classes for one-hot encoding.
+
+    Outputs:
+    - x_mix: ndarray [N, C, T]
+    - y_mix: ndarray [N, K] soft labels
+
+    Internal logic:
+    - Samples lambda from Beta(alpha, alpha), permutes batch, and mixes.
+    """
     alpha = max(float(alpha), 1e-3)
     n = x.shape[0]
     lam = np.random.beta(alpha, alpha, size=n).astype(np.float32)

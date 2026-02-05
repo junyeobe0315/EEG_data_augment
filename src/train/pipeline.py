@@ -33,6 +33,17 @@ from src.utils.seed import set_global_seed, stable_hash_seed
 
 
 def _resolve_device(train_cfg: dict) -> str:
+    """Resolve training device string from config.
+
+    Inputs:
+    - train_cfg: training config dict with "device" key.
+
+    Outputs:
+    - device string ("cuda" or "cpu" or explicit device).
+
+    Internal logic:
+    - Uses CUDA when available if device is "auto".
+    """
     req = str(train_cfg.get("device", "auto"))
     if req == "auto":
         return "cuda" if torch.cuda.is_available() else "cpu"
@@ -46,6 +57,16 @@ def _resolve_batch_size(train_cfg: dict, r: float) -> int:
     - batch_size_by_r: mapping of {r_value: batch_size}, chooses max r_value <= r.
     - batch_size_scale_with_r: bool, scales base batch_size by r / r_ref.
       r_ref defaults to 0.1, min_scale defaults to 1.0, max_scale optional.
+
+    Inputs:
+    - train_cfg: training config dict.
+    - r: low-data fraction.
+
+    Outputs:
+    - resolved batch size (int).
+
+    Internal logic:
+    - Applies explicit r-to-batch mapping first, otherwise scales base size.
     """
     base = int(train_cfg.get("batch_size", 32))
     by_r = train_cfg.get("batch_size_by_r")
@@ -76,6 +97,18 @@ def _generator_run_id(
     preprocess_cfg: dict,
     gen_cfg: dict,
 ) -> str:
+    """Build a deterministic generator cache ID from configs.
+
+    Inputs:
+    - subject/seed/r/generator: identifiers for the run.
+    - dataset_cfg/preprocess_cfg/gen_cfg: config dicts that affect generator output.
+
+    Outputs:
+    - short hash string for generator cache directory.
+
+    Internal logic:
+    - Hashes a payload of relevant settings to ensure cache validity.
+    """
     payload = {
         "dataset": dataset_cfg.get("name", "bci2a"),
         "subject": subject,
@@ -90,6 +123,17 @@ def _generator_run_id(
 
 
 def _list_ckpts(gen_run_dir: Path) -> list[str]:
+    """List generator checkpoint files in a run directory.
+
+    Inputs:
+    - gen_run_dir: path to generator run directory.
+
+    Outputs:
+    - sorted list of checkpoint paths as strings.
+
+    Internal logic:
+    - Globs ckpt_epoch_*.pt and sorts lexicographically.
+    """
     ckpts = sorted(gen_run_dir.glob("ckpt_epoch_*.pt"))
     return [str(p) for p in ckpts]
 
@@ -115,24 +159,44 @@ def run_experiment(
     compute_distance: bool = True,
     alpha_search_cfg: dict | None = None,
 ) -> dict[str, Any]:
+    """Run a single experiment configuration end-to-end.
+
+    Inputs:
+    - subject/seed/r: dataset split identifiers.
+    - method/classifier/generator/alpha_ratio/qc_on: treatment knobs.
+    - dataset_cfg/preprocess_cfg/split_cfg/model_cfgs/gen_cfgs/qc_cfg: configs.
+    - results_path: path to results.csv (for consistency, though row is returned).
+    - run_root: root directory for run artifacts.
+    - stage: "alpha_search" | "final_eval" | "full".
+    - compute_distance: whether to compute embedding-based distances.
+    - alpha_search_cfg: optional config for alpha-search proxies.
+
+    Outputs:
+    - row dict containing metrics, diagnostics, and metadata for results.csv.
+
+    Internal logic:
+    - Loads cached data and split indices, fits normalizer on train_sub only.
+    - Runs GenAug branch (generator, QC, sampling, optional distance) or baseline.
+    - Trains classifier (or linear-probe proxy) and assembles a results row.
+    """
     start_time = time.time()
     set_global_seed(seed)
 
-    index_df = load_index(dataset_cfg["index_path"])
-    splits = load_split_indices(dataset_cfg["name"], subject, seed, r, root="./artifacts/splits")
+    index_df = load_index(dataset_cfg["index_path"])  # sample metadata table
+    splits = load_split_indices(dataset_cfg["name"], subject, seed, r, root="./artifacts/splits")  # split indices
 
-    x_train, y_train = load_samples(index_df, splits["train_sub"])
-    x_val, y_val = load_samples(index_df, splits["val"])
-    x_test, y_test = load_samples(index_df, splits["test"])
+    x_train, y_train = load_samples(index_df, splits["train_sub"])  # T_train_subsample
+    x_val, y_val = load_samples(index_df, splits["val"])  # T_val
+    x_test, y_test = load_samples(index_df, splits["test"])  # E_test
 
     normalizer = ZScoreNormalizer(eps=float(preprocess_cfg.get("normalization", {}).get("eps", 1.0e-6)))
-    normalizer.fit(x_train)
+    normalizer.fit(x_train)  # fit on T_train_subsample only (leak-free)
     x_train = normalizer.transform(x_train)
     x_val = normalizer.transform(x_val)
     x_test = normalizer.transform(x_test)
-    normalizer_state = normalizer.state_dict()
+    normalizer_state = normalizer.state_dict()  # saved for embedding + checkpoints
 
-    num_classes = int(np.max(y_train)) + 1
+    num_classes = int(np.max(y_train)) + 1  # inferred class count
     run_key = {
         "subject": subject,
         "seed": seed,
@@ -144,8 +208,8 @@ def run_experiment(
         "alpha_ratio": float(alpha_ratio),
     }
 
-    run_id = make_run_id(run_key)
-    run_dir = ensure_dir(Path(run_root) / run_id)
+    run_id = make_run_id(run_key)  # deterministic run id for reproducibility
+    run_dir = ensure_dir(Path(run_root) / run_id)  # per-run artifact directory
     save_yaml(run_dir / "config_snapshot.yaml", {
         "dataset": dataset_cfg,
         "preprocess": preprocess_cfg,
@@ -232,16 +296,28 @@ def run_experiment(
             else:
                 best_ckpt = ckpts[-1]
 
-            target_counts = compute_target_counts(y_train, alpha_ratio)
+            target_counts = compute_target_counts(y_train, alpha_ratio)  # per-class synth targets
             qc_state = None
             if qc_on:
                 qc_state = fit_qc(x_train, y_train, sfreq=int(dataset_cfg.get("sfreq", 250)), cfg=qc_cfg)
 
             sample_cfg = gen_cfg.get("sample", {})
-            buffer = float(sample_cfg.get("dynamic_buffer", 1.2))
-            ddpm_steps = sample_cfg.get("ddpm_steps")
+            buffer = float(sample_cfg.get("dynamic_buffer", 1.2))  # oversample buffer
+            ddpm_steps = sample_cfg.get("ddpm_steps")  # optional DDPM steps
 
             def _sample_fn(cls: int, n: int) -> np.ndarray:
+                """Sample n synthetic trials for a given class.
+
+                Inputs:
+                - cls: class index to condition on.
+                - n: number of samples to generate.
+
+                Outputs:
+                - ndarray [n, C, T] synthetic samples.
+
+                Internal logic:
+                - Builds a label vector and calls the generator sampler.
+                """
                 y = np.full((n,), int(cls), dtype=np.int64)
                 return sample_from_generator(
                     best_ckpt,
@@ -251,13 +327,13 @@ def run_experiment(
                 )
 
             pool_cfg = gen_cfg.get("pool", {})
-            pool_enabled = bool(pool_cfg.get("enabled", False))
-            pool_alpha = float(pool_cfg.get("alpha_ratio_max", alpha_ratio))
+            pool_enabled = bool(pool_cfg.get("enabled", False))  # enable pooled sampling
+            pool_alpha = float(pool_cfg.get("alpha_ratio_max", alpha_ratio))  # pool target ratio
             if pool_alpha < alpha_ratio:
                 pool_alpha = float(alpha_ratio)
 
-            x_syn = np.empty((0,))
-            y_syn = np.empty((0,), dtype=np.int64)
+            x_syn = np.empty((0,))  # synthetic samples (init)
+            y_syn = np.empty((0,), dtype=np.int64)  # synthetic labels (init)
             pool_report: dict[str, Any] = {}
             select_report: dict[str, Any] = {}
             pool_x = None

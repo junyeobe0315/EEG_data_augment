@@ -16,6 +16,18 @@ from src.utils.config import load_yaml
 
 
 def main() -> None:
+    """Select alpha* per r by maximizing a validation metric.
+
+    Inputs:
+    - results.csv path and metric name (e.g., val_kappa).
+    - Optional qc_on flag to filter rows.
+
+    Outputs:
+    - Writes alpha_star.json mapping r -> best alpha_ratio.
+
+    Internal logic:
+    - Filters GenAug rows for screening classifier and picks alpha with best mean metric.
+    """
     parser = argparse.ArgumentParser(description="Select alpha* from validation results")
     parser.add_argument("--results", type=str, default="results/results.csv")
     parser.add_argument("--metric", type=str, default="val_kappa")
@@ -24,10 +36,10 @@ def main() -> None:
     parser.add_argument("--override", action="append", default=[])
     args = parser.parse_args()
 
-    exp_cfg = load_yaml("configs/experiment_grid.yaml", overrides=args.override)
-    screening_classifier = exp_cfg.get("stage", {}).get("screening_classifier", "eegnet")
+    exp_cfg = load_yaml("configs/experiment_grid.yaml", overrides=args.override)  # grid config
+    screening_classifier = exp_cfg.get("stage", {}).get("screening_classifier", "eegnet")  # EEGNet proxy
 
-    df = pd.read_csv(args.results)
+    df = pd.read_csv(args.results)  # results table
     df = df[(df["method"] == "GenAug") & (df["classifier"] == screening_classifier)]
     if args.qc_on:
         df = df[df["qc_on"] == True]

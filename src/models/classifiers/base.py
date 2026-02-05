@@ -12,6 +12,17 @@ from src.models.classifiers.fbcsp_svm import SVMClassifier
 
 
 def normalize_classifier_type(model_type: str) -> str:
+    """Normalize classifier type strings to canonical keys.
+
+    Inputs:
+    - model_type: raw string (e.g., "eeg_conformer", "svm").
+
+    Outputs:
+    - canonical string key.
+
+    Internal logic:
+    - Lowercases and maps aliases to supported identifiers, raising on unknowns.
+    """
     key = model_type.strip().lower().replace("-", "_").replace(" ", "_")
     alias = {
         "eegnet": "eegnet",
@@ -28,6 +39,17 @@ def normalize_classifier_type(model_type: str) -> str:
 
 
 def is_sklearn_model(model_type: str) -> bool:
+    """Return True if model_type corresponds to a sklearn-style model.
+
+    Inputs:
+    - model_type: raw classifier name.
+
+    Outputs:
+    - bool indicating sklearn-style pipeline (currently SVM/FBCSP).
+
+    Internal logic:
+    - Normalizes the name and checks for the "svm" key.
+    """
     return normalize_classifier_type(model_type) == "svm"
 
 
@@ -38,6 +60,20 @@ def build_classifier(
     n_classes: int,
     cfg: dict,
 ) -> nn.Module | SVMClassifier:
+    """Build a classifier model by type.
+
+    Inputs:
+    - model_type: classifier key.
+    - n_ch/n_t: input channels and time steps.
+    - n_classes: number of output classes.
+    - cfg: model configuration dict.
+
+    Outputs:
+    - torch.nn.Module or SVMClassifier instance.
+
+    Internal logic:
+    - Dispatches by normalized model_type and passes config fields through.
+    """
     mtype = normalize_classifier_type(model_type)
     if mtype == "eegnet":
         return build_eegnet(cfg, n_ch, n_t, n_classes)

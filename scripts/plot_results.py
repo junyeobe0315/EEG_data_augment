@@ -13,13 +13,24 @@ if str(ROOT) not in sys.path:
 
 
 def main() -> None:
+    """Plot metric curves from results.csv.
+
+    Inputs:
+    - results.csv path and metric name.
+
+    Outputs:
+    - Saves PNG plots per classifier in artifacts/figures.
+
+    Internal logic:
+    - Aggregates mean metric by r for each method and classifier, then plots lines.
+    """
     parser = argparse.ArgumentParser(description="Plot results")
     parser.add_argument("--results", type=str, default="results/results.csv")
     parser.add_argument("--out_dir", type=str, default="artifacts/figures")
     parser.add_argument("--metric", type=str, default="kappa")
     args = parser.parse_args()
 
-    df = pd.read_csv(args.results)
+    df = pd.read_csv(args.results)  # full results table
     if df.empty:
         raise RuntimeError("results.csv is empty.")
 
@@ -27,7 +38,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     metric = args.metric
-    for classifier in sorted(df["classifier"].unique()):
+    for classifier in sorted(df["classifier"].unique()):  # plot each classifier separately
         sub = df[df["classifier"] == classifier]
         fig, ax = plt.subplots(figsize=(7, 4))
         for method in sorted(sub["method"].unique()):
