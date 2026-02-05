@@ -315,6 +315,22 @@ def _evaluate_svm(model, x: np.ndarray, y: np.ndarray):
     return compute_metrics(y, pred)
 
 
+def _base_clf_ckpt_payload(
+    model_type: str,
+    mode: str,
+    norm: ZScoreNormalizer,
+    shape: dict,
+    n_classes: int,
+) -> dict:
+    return {
+        "normalizer": norm.state_dict(),
+        "shape": shape,
+        "n_classes": int(n_classes),
+        "mode": mode,
+        "model_type": model_type,
+    }
+
+
 def train_classifier(
     split: Dict,
     index_df: pd.DataFrame,
@@ -395,6 +411,8 @@ def train_classifier(
         np.savez_compressed(exp_dir / "aug_used.npz", X=x_added_raw, y=y_added)
 
     model_type = normalize_classifier_type(str(clf_cfg["model"].get("type", "eegnet")))
+    shape = {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])}
+    n_classes = int(np.max(y_train)) + 1
     alpha_tilde = float(ratio / (1.0 + ratio))
     n_train_real = int(len(x_train_real))
     n_train_aug = int(len(x_added_raw))
@@ -444,6 +462,14 @@ def train_classifier(
             return cur < best
         return cur > best
 
+    ckpt_base = _base_clf_ckpt_payload(
+        model_type=model_type,
+        mode=mode,
+        norm=norm,
+        shape=shape,
+        n_classes=n_classes,
+    )
+
     if is_sklearn_model(model_type):
         svm = build_svm_classifier(clf_cfg["model"])
         svm.fit(x_train, y_train)
@@ -452,17 +478,7 @@ def train_classifier(
         test_metrics = _evaluate_svm(svm, x_test, y_test) if evaluate_test and x_test is not None and y_test is not None else {}
 
         append_jsonl(log_path, {"epoch": 1, "train_size": int(len(x_train)), **val_metrics})
-        joblib.dump(
-            {
-                "svm_model": svm,
-                "normalizer": norm.state_dict(),
-                "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
-                "n_classes": int(np.max(y_train)) + 1,
-                "mode": mode,
-                "model_type": model_type,
-            },
-            exp_dir / "ckpt.pkl",
-        )
+        joblib.dump({"svm_model": svm, **ckpt_base}, exp_dir / "ckpt.pkl")
         train_meta.update(
             {
                 "step_mode": "not_applicable_svm",
@@ -520,7 +536,7 @@ def train_classifier(
         model_type=model_type,
         n_ch=x_train.shape[1],
         n_t=x_train.shape[2],
-        n_classes=int(np.max(y_train)) + 1,
+        n_classes=n_classes,
         cfg=clf_cfg["model"],
     ).to(device)
 
@@ -613,14 +629,7 @@ def train_classifier(
                 best_ckpt_step = int(total_steps_done)
                 best_ckpt_epoch = None
                 torch.save(
-                    {
-                        "state_dict": model.state_dict(),
-                        "normalizer": norm.state_dict(),
-                        "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
-                        "n_classes": int(np.max(y_train)) + 1,
-                        "mode": mode,
-                        "model_type": model_type,
-                    },
+                    {"state_dict": model.state_dict(), **ckpt_base},
                     exp_dir / "ckpt.pt",
                 )
     else:
@@ -656,14 +665,7 @@ def train_classifier(
                 best_ckpt_step = None
                 best_ckpt_epoch = int(ep)
                 torch.save(
-                    {
-                        "state_dict": model.state_dict(),
-                        "normalizer": norm.state_dict(),
-                        "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
-                        "n_classes": int(np.max(y_train)) + 1,
-                        "mode": mode,
-                        "model_type": model_type,
-                    },
+                    {"state_dict": model.state_dict(), **ckpt_base},
                     exp_dir / "ckpt.pt",
                 )
 
@@ -671,14 +673,7 @@ def train_classifier(
     if not ckpt_path.exists():
         # Defensive fallback for extreme instability (e.g., all-NaN validation metrics).
         torch.save(
-            {
-                "state_dict": model.state_dict(),
-                "normalizer": norm.state_dict(),
-                "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
-                "n_classes": int(np.max(y_train)) + 1,
-                "mode": mode,
-                "model_type": model_type,
-            },
+            {"state_dict": model.state_dict(), **ckpt_base},
             ckpt_path,
         )
         if last_val_metrics is not None:
