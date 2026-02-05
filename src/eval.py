@@ -7,6 +7,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch
+from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, cohen_kappa_score, f1_score
 
 from src.dataio import load_samples_by_ids
@@ -22,6 +23,35 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
         "kappa": float(cohen_kappa_score(y_true, y_pred)),
         "f1_macro": float(f1_score(y_true, y_pred, average="macro")),
     }
+
+
+def evaluate_torch_classifier(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    criterion: torch.nn.Module | None = None,
+    add_regularization: bool = False,
+) -> Dict[str, float]:
+    model.eval()
+    ys, ps, losses = [], [], []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb = xb.to(device)
+            yb_cpu = yb.numpy()
+            yb_dev = yb.to(device)
+            logits = model(xb)
+            if criterion is not None:
+                loss = criterion(logits, yb_dev)
+                if add_regularization and hasattr(model, "regularization_loss"):
+                    loss = loss + model.regularization_loss()
+                losses.append(float(loss.item()))
+            pred = logits.argmax(dim=1).cpu().numpy()
+            ps.append(pred)
+            ys.append(yb_cpu)
+    out = compute_metrics(np.concatenate(ys), np.concatenate(ps))
+    if losses:
+        out["loss"] = float(np.mean(losses))
+    return out
 
 
 def evaluate_saved_classifier(

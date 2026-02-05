@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.dataio import load_samples_by_ids
-from src.eval import compute_metrics
+from src.eval import compute_metrics, evaluate_torch_classifier
 from src.models_clf import (
     build_svm_classifier,
     build_torch_classifier,
@@ -266,33 +266,6 @@ def _sample_gen_aug_class_conditional(
         "global_replace_used": bool(len(replacement_used) > 0),
     }
     return x_aug, y_aug, meta
-
-
-def _evaluate_torch(
-    model: torch.nn.Module,
-    dl: DataLoader,
-    device: torch.device,
-    criterion: torch.nn.Module | None = None,
-):
-    model.eval()
-    ys, ps = [], []
-    losses = []
-    with torch.no_grad():
-        for xb, yb in dl:
-            xb = xb.to(device)
-            yb_dev = yb.to(device)
-            logits = model(xb)
-            if criterion is not None:
-                losses.append(float(criterion(logits, yb_dev).item()))
-            pred = logits.argmax(dim=1).cpu().numpy()
-            ps.append(pred)
-            ys.append(yb.numpy())
-    y_true = np.concatenate(ys)
-    y_pred = np.concatenate(ps)
-    out = compute_metrics(y_true, y_pred)
-    if losses:
-        out["loss"] = float(np.mean(losses))
-    return out
 
 
 def _evaluate_svm(model, x: np.ndarray, y: np.ndarray):
@@ -573,7 +546,7 @@ def train_classifier(
                 loss_meter.append(float(loss.item()))
                 total_steps_done += 1
 
-            val_metrics = _evaluate_torch(model, va_dl, device, criterion=ce)
+            val_metrics = evaluate_torch_classifier(model, va_dl, device, criterion=ce)
             last_val_metrics = val_metrics
             if sched is not None:
                 sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
@@ -617,7 +590,7 @@ def train_classifier(
                 loss_meter.append(float(loss.item()))
                 total_steps_done += 1
 
-            val_metrics = _evaluate_torch(model, va_dl, device, criterion=ce)
+            val_metrics = evaluate_torch_classifier(model, va_dl, device, criterion=ce)
             last_val_metrics = val_metrics
             if sched is not None:
                 sched.step(float(val_metrics.get("loss", np.mean(loss_meter))))
@@ -648,7 +621,7 @@ def train_classifier(
     # Evaluate best checkpoint on requested split.
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
-    test_metrics = _evaluate_torch(model, te_dl, device) if te_dl is not None else {}
+    test_metrics = evaluate_torch_classifier(model, te_dl, device) if te_dl is not None else {}
     train_meta.update(
         {
             "step_mode": "fixed_steps" if use_fixed_steps else "epoch_loop",

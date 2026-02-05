@@ -9,34 +9,10 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.dataio import load_samples_by_ids
-from src.eval import compute_metrics
+from src.eval import evaluate_torch_classifier
 from src.models_official_faithful import ATCNetOfficialFaithful, build_faithful_model
 from src.preprocess import ZScoreNormalizer
 from src.utils import append_jsonl, build_ckpt_payload, ensure_dir, resolve_device
-
-
-def _evaluate(
-    model: torch.nn.Module,
-    loader: DataLoader,
-    ce: torch.nn.Module,
-    device: torch.device,
-) -> Dict[str, float]:
-    model.eval()
-    ys, ps, losses = [], [], []
-    with torch.no_grad():
-        for xb, yb in loader:
-            xb = xb.to(device)
-            yb = yb.to(device)
-            logits = model(xb)
-            loss = ce(logits, yb)
-            if isinstance(model, ATCNetOfficialFaithful):
-                loss = loss + model.regularization_loss()
-            losses.append(float(loss.item()))
-            ys.append(yb.cpu().numpy())
-            ps.append(logits.argmax(dim=1).cpu().numpy())
-    out = compute_metrics(np.concatenate(ys), np.concatenate(ps))
-    out["loss"] = float(np.mean(losses))
-    return out
 
 
 def train_faithful_classifier(
@@ -124,7 +100,7 @@ def train_faithful_classifier(
             opt.step()
             train_losses.append(float(loss.item()))
 
-        val = _evaluate(model, va_dl, ce, device)
+        val = evaluate_torch_classifier(model, va_dl, device, criterion=ce, add_regularization=True)
         scheduler.step(float(val["loss"]))
         append_jsonl(
             log_path,
@@ -145,5 +121,5 @@ def train_faithful_classifier(
 
     ckpt = torch.load(best_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
-    test_metrics = _evaluate(model, te_dl, ce, device)
+    test_metrics = evaluate_torch_classifier(model, te_dl, device, criterion=ce, add_regularization=True)
     return {k: float(v) for k, v in test_metrics.items() if k in {"acc", "kappa", "f1_macro"}}
