@@ -56,7 +56,7 @@ python scripts/01_make_splits.py
 python scripts/11_validate_pipeline.py
 
 echo "[step5] launch tmux sessions"
-BATCHES=(8 16 32 64 128 256 512)
+BATCHES=(256 512 1024)
 for gen_bs in "${BATCHES[@]}"; do
   for clf_bs in "${BATCHES[@]}"; do
     session="genb${gen_bs}clfb${clf_bs}"
