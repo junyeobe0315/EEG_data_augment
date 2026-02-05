@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import copy
 import hashlib
 import json
@@ -21,7 +22,12 @@ def _load_split(path: Path) -> dict:
         return json.load(f)
 
 
-def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
+def _build_gen_cfg(
+    base_cfg: dict,
+    gen_model: str,
+    sweep_cfg: dict,
+    override_batch_size: int | None = None,
+) -> dict:
     cfg = copy.deepcopy(base_cfg)
     cfg["model"]["type"] = gen_model
 
@@ -39,6 +45,9 @@ def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
         cfg["sample"]["ddpm_steps"] = int(preset["ddpm_steps"])
     if "diffusion_steps" in preset:
         cfg.setdefault("model", {}).setdefault("conditional_ddpm", {})["diffusion_steps"] = int(preset["diffusion_steps"])
+
+    if override_batch_size is not None and override_batch_size > 0:
+        cfg["train"]["batch_size"] = int(override_batch_size)
 
     return cfg
 
@@ -86,7 +95,22 @@ def _stable_gen_seed(
     return int((int(base_seed) + digest) % (2**32 - 1))
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train generative models for EEG augmentation.")
+    parser.add_argument(
+        "--batch-size",
+        "--gen-batch",
+        "--gen_batch",
+        dest="batch_size",
+        type=int,
+        default=None,
+        help="Override generator training batch size for all gen models.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
     clf_cfg = load_yaml(ROOT / "configs/clf.yaml")
@@ -109,7 +133,12 @@ def main() -> None:
         raise RuntimeError("No split files found. Run scripts/01_make_splits.py first.")
 
     for gen_model in gen_models:
-        run_cfg = _build_gen_cfg(gen_cfg, gen_model=gen_model, sweep_cfg=sweep_cfg)
+        run_cfg = _build_gen_cfg(
+            gen_cfg,
+            gen_model=gen_model,
+            sweep_cfg=sweep_cfg,
+            override_batch_size=args.batch_size,
+        )
 
         for sf in split_files:
             split = _load_split(sf)

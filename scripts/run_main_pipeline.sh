@@ -10,11 +10,47 @@ else
   PY=("python")
 fi
 
+GEN_BATCH=""
+CLF_BATCH=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gen_batch|--gen-batch)
+      GEN_BATCH="$2"
+      shift 2
+      ;;
+    --gen_batch=*|--gen-batch=*)
+      GEN_BATCH="${1#*=}"
+      shift 1
+      ;;
+    --clf_batch|--clf-batch)
+      CLF_BATCH="$2"
+      shift 2
+      ;;
+    --clf_batch=*|--clf-batch=*)
+      CLF_BATCH="${1#*=}"
+      shift 1
+      ;;
+    *)
+      echo "[warn] Unknown option: $1" >&2
+      shift 1
+      ;;
+  esac
+done
+
+GEN_ARGS=()
+CLF_ARGS=()
+if [[ -n "${GEN_BATCH}" ]]; then
+  GEN_ARGS+=(--batch-size "${GEN_BATCH}")
+fi
+if [[ -n "${CLF_BATCH}" ]]; then
+  CLF_ARGS+=(--batch-size "${CLF_BATCH}")
+fi
+
 "${PY[@]}" scripts/00_prepare_data.py
 "${PY[@]}" scripts/01_make_splits.py
-"${PY[@]}" scripts/02_train_gen.py
+"${PY[@]}" scripts/02_train_gen.py "${GEN_ARGS[@]}"
 "${PY[@]}" scripts/03_sample_and_qc.py
-"${PY[@]}" scripts/04_train_clf.py
+"${PY[@]}" scripts/04_train_clf.py "${CLF_ARGS[@]}"
 "${PY[@]}" scripts/05_eval_and_aggregate.py
 
 echo "[info] Main sweep finished with evaluate_test=false by default."

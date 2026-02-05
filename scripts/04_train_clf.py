@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import copy
 import hashlib
 import json
@@ -24,7 +25,12 @@ def _load_split(path: Path) -> dict:
         return json.load(f)
 
 
-def _build_clf_cfg(base_cfg: dict, clf_model: str, sweep_cfg: dict) -> dict:
+def _build_clf_cfg(
+    base_cfg: dict,
+    clf_model: str,
+    sweep_cfg: dict,
+    override_batch_size: int | None = None,
+) -> dict:
     cfg = copy.deepcopy(base_cfg)
     cfg["model"]["type"] = clf_model
 
@@ -34,6 +40,8 @@ def _build_clf_cfg(base_cfg: dict, clf_model: str, sweep_cfg: dict) -> dict:
         for key in ("epochs", "batch_size", "lr", "weight_decay", "num_workers", "device"):
             if key in pp:
                 cfg["train"][key] = pp[key]
+        if override_batch_size is not None and override_batch_size > 0:
+            cfg["train"]["batch_size"] = int(override_batch_size)
         return cfg
 
     if not bool(sweep_cfg.get("apply_vram_presets", True)):
@@ -44,7 +52,24 @@ def _build_clf_cfg(base_cfg: dict, clf_model: str, sweep_cfg: dict) -> dict:
     if "batch_size" in preset and int(preset["batch_size"]) > 0:
         cfg["train"]["batch_size"] = int(preset["batch_size"])
 
+    if override_batch_size is not None and override_batch_size > 0:
+        cfg["train"]["batch_size"] = int(override_batch_size)
+
     return cfg
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train classifiers with augmentation modes.")
+    parser.add_argument(
+        "--batch-size",
+        "--clf-batch",
+        "--clf_batch",
+        dest="batch_size",
+        type=int,
+        default=None,
+        help="Override classifier training batch size for all clf models.",
+    )
+    return parser.parse_args()
 
 
 def _find_synth_npz(root: Path, gen_model: str, split_stem: str, qc_on: bool) -> Path:
@@ -145,6 +170,7 @@ def _in_allowed_grid(split: dict, split_cfg: dict, data_cfg: dict) -> bool:
 
 
 def main() -> None:
+    args = _parse_args()
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     split_cfg = load_yaml(ROOT / "configs/split.yaml")
     pp_cfg = load_yaml(ROOT / "configs/preprocess.yaml")
@@ -184,7 +210,12 @@ def main() -> None:
         p = float(split.get("low_data_frac", 1.0))
 
         for clf_model in clf_models:
-            clf_run_cfg = _build_clf_cfg(clf_cfg, clf_model=clf_model, sweep_cfg=sweep_cfg)
+            clf_run_cfg = _build_clf_cfg(
+                clf_cfg,
+                clf_model=clf_model,
+                sweep_cfg=sweep_cfg,
+                override_batch_size=args.batch_size,
+            )
             modes = [str(m) for m in clf_run_cfg.get("augmentation", {}).get("modes", ["none"])]
             evaluate_test = bool(clf_run_cfg.get("evaluation", {}).get("evaluate_test", False))
 
