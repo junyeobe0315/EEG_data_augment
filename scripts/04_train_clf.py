@@ -62,7 +62,20 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Override classifier training batch size for all clf models.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-train even if output metrics already exist.",
+    )
     return parser.parse_args()
+
+
+def _maybe_load_metrics(out_dir: Path, force: bool) -> dict | None:
+    metrics_path = out_dir / "metrics.json"
+    if (not force) and metrics_path.exists():
+        print(f"[skip] {out_dir.name} (metrics.json exists)")
+        return load_json(metrics_path)
+    return None
 
 
 def _find_synth_npz(root: Path, gen_model: str, split_stem: str, qc_on: bool) -> Path:
@@ -211,16 +224,18 @@ def main() -> None:
                         qc=False,
                     )
                     out_dir = ROOT / "runs/clf" / exp_id
-                    m = train_classifier(
-                        split,
-                        index_df,
-                        clf_run_cfg,
-                        pp_cfg,
-                        out_dir,
-                        mode=mode,
-                        ratio=ratio,
-                        evaluate_test=evaluate_test,
-                    )
+                    m = _maybe_load_metrics(out_dir, args.force)
+                    if m is None:
+                        m = train_classifier(
+                            split,
+                            index_df,
+                            clf_run_cfg,
+                            pp_cfg,
+                            out_dir,
+                            mode=mode,
+                            ratio=ratio,
+                            evaluate_test=evaluate_test,
+                        )
                     rows.append(
                         {
                             "split": sf.stem,
@@ -274,16 +289,18 @@ def main() -> None:
                             qc=False,
                         )
                         out_dir = ROOT / "runs/clf" / exp_id
-                        m = train_classifier(
-                            split,
-                            index_df,
-                            clf_run_cfg,
-                            pp_cfg,
-                            out_dir,
-                            mode=mode,
-                            ratio=ratio,
-                            evaluate_test=evaluate_test,
-                        )
+                        m = _maybe_load_metrics(out_dir, args.force)
+                        if m is None:
+                            m = train_classifier(
+                                split,
+                                index_df,
+                                clf_run_cfg,
+                                pp_cfg,
+                                out_dir,
+                                mode=mode,
+                                ratio=ratio,
+                                evaluate_test=evaluate_test,
+                            )
                         rows.append(
                             {
                                 "split": sf.stem,
@@ -352,17 +369,19 @@ def main() -> None:
                                     qc=bool(qc_on),
                                 )
                                 out_dir = ROOT / "runs/clf" / exp_id
-                                m = train_classifier(
-                                    split,
-                                    index_df,
-                                    clf_run_cfg,
-                                    pp_cfg,
-                                    out_dir,
-                                    mode=mode,
-                                    ratio=ratio,
-                                    synth_npz=str(synth_npz),
-                                    evaluate_test=evaluate_test,
-                                )
+                                m = _maybe_load_metrics(out_dir, args.force)
+                                if m is None:
+                                    m = train_classifier(
+                                        split,
+                                        index_df,
+                                        clf_run_cfg,
+                                        pp_cfg,
+                                        out_dir,
+                                        mode=mode,
+                                        ratio=ratio,
+                                        synth_npz=str(synth_npz),
+                                        evaluate_test=evaluate_test,
+                                    )
                                 rows.append(
                                     {
                                         "split": sf.stem,

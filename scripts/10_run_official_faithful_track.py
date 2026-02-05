@@ -14,7 +14,7 @@ ROOT = project_root(__file__)
 
 from src.dataio import load_processed_index
 from src.train_official_faithful import train_faithful_classifier
-from src.utils import ensure_dir, load_yaml, make_exp_id, set_seed
+from src.utils import ensure_dir, load_json, load_yaml, make_exp_id, save_json, set_seed
 
 
 def _make_split(index_df: pd.DataFrame, subject: int, val_ratio: float, split_seed: int, stratify: bool) -> dict:
@@ -49,6 +49,7 @@ def main() -> None:
     ap.add_argument("--config", type=str, default="configs/official_faithful.yaml")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", type=str, default="")
+    ap.add_argument("--force", action="store_true", help="Re-train even if outputs already exist.")
     args = ap.parse_args()
 
     cfg = load_yaml(ROOT / args.config)
@@ -77,15 +78,21 @@ def main() -> None:
                 clf=model_key,
             )
             run_dir = ROOT / "runs/clf" / run_id
-            m = train_faithful_classifier(
-                split=split,
-                index_df=idx,
-                model_key=model_key,
-                model_cfg=model_cfg,
-                train_cfg=train_cfg,
-                preprocess_cfg=cfg["preprocess"],
-                out_dir=run_dir,
-            )
+            metrics_path = run_dir / "metrics.json"
+            if (not args.force) and metrics_path.exists():
+                m = load_json(metrics_path)
+                print(f"[skip] {run_dir.name} (metrics.json exists)")
+            else:
+                m = train_faithful_classifier(
+                    split=split,
+                    index_df=idx,
+                    model_key=model_key,
+                    model_cfg=model_cfg,
+                    train_cfg=train_cfg,
+                    preprocess_cfg=cfg["preprocess"],
+                    out_dir=run_dir,
+                )
+                save_json(metrics_path, m)
             row = {
                 "seed": int(args.seed),
                 "subject": int(subject),

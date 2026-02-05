@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import copy
+import argparse
 import hashlib
 from pathlib import Path
 
@@ -12,29 +12,12 @@ import pandas as pd
 
 ROOT = project_root(__file__)
 
+from src.config_utils import build_gen_cfg
 from src.dataio import load_processed_index, load_samples_by_ids
 from src.models_gen import normalize_generator_type
 from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
 from src.utils import ensure_dir, in_allowed_grid, load_json, load_yaml, make_exp_id, require_split_files, save_json, set_seed, stable_hash_seed
-
-
-def _build_gen_cfg(base_cfg: dict, gen_model: str, sweep_cfg: dict) -> dict:
-    cfg = copy.deepcopy(base_cfg)
-    cfg["model"]["type"] = gen_model
-
-    if not bool(sweep_cfg.get("apply_vram_presets", True)):
-        return cfg
-
-    profile = str(sweep_cfg.get("vram_profile", "6gb"))
-    preset = cfg.get("vram_presets", {}).get(profile, {}).get(gen_model, {})
-
-    if "n_per_class" in preset:
-        cfg["sample"]["n_per_class"] = int(preset["n_per_class"])
-    if "ddpm_steps" in preset:
-        cfg["sample"]["ddpm_steps"] = int(preset["ddpm_steps"])
-
-    return cfg
 
 
 def _sha256_file(path: Path) -> str:
@@ -112,7 +95,18 @@ def _resolve_n_per_class(
     return resolved, meta
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Sample generators and run QC (with caching).")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-sample and re-run QC even if outputs already exist.",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = _parse_args()
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
     sweep_cfg = load_yaml(ROOT / "configs/sweep.yaml")
@@ -131,7 +125,7 @@ def main() -> None:
 
     reports = []
     for gen_model in gen_models:
-        run_cfg = _build_gen_cfg(gen_cfg, gen_model=gen_model, sweep_cfg=sweep_cfg)
+        run_cfg = build_gen_cfg(gen_cfg, gen_model=gen_model, sweep_cfg=sweep_cfg, apply_train=False)
 
         for sf in split_files:
             split = load_json(sf)
@@ -144,6 +138,16 @@ def main() -> None:
             except Exception:
                 subject_i = -1
             p = split.get("low_data_frac", 1.0)
+
+            synth_path = synth_dir / f"synth_{gen_model}_{sf.stem}.npz"
+            kept_path = qc_dir / f"synth_qc_{gen_model}_{sf.stem}.npz"
+            report_path = kept_path.with_suffix(".report.json")
+
+            if (not args.force) and kept_path.exists() and report_path.exists():
+                report = load_json(report_path)
+                reports.append({"split": sf.stem, "subject": subject, "seed": seed, "p": p, "gen_model": gen_model, **report})
+                print(f"[skip] {sf.stem} gen={gen_model} (qc outputs exist)")
+                continue
 
             exp_id = make_exp_id(
                 "gen",
@@ -184,15 +188,19 @@ def main() -> None:
                 gen_model=gen_model,
                 stage="qc",
             )
-            set_seed(synth_seed)
-            synth = sample_by_class(
-                ckpt_path=ckpt_path,
-                n_per_class=int(n_per_class),
-                num_classes=len(data_cfg["class_names"]),
-                device=run_cfg["train"].get("device", "cpu"),
-            )
-            synth_path = synth_dir / f"synth_{gen_model}_{sf.stem}.npz"
-            save_synth_npz(synth_path, synth)
+            if (not args.force) and synth_path.exists():
+                arr = np.load(synth_path)
+                synth = {k: arr[k] for k in arr.files}
+                print(f"[skip] {sf.stem} gen={gen_model} (synth exists)")
+            else:
+                set_seed(synth_seed)
+                synth = sample_by_class(
+                    ckpt_path=ckpt_path,
+                    n_per_class=int(n_per_class),
+                    num_classes=len(data_cfg["class_names"]),
+                    device=run_cfg["train"].get("device", "cpu"),
+                )
+                save_synth_npz(synth_path, synth)
 
             set_seed(qc_seed)
             kept, report = run_qc(
@@ -202,7 +210,6 @@ def main() -> None:
                 cfg=qc_cfg,
                 real_y=y_real_train,
             )
-            kept_path = qc_dir / f"synth_qc_{gen_model}_{sf.stem}.npz"
             save_synth_npz(kept_path, kept)
 
             synth_meta = {

@@ -13,6 +13,7 @@ echo "[info] Using python: ${PY[*]}"
 
 GEN_BATCH=""
 CLF_BATCH=""
+FORCE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gen_batch|--gen-batch)
@@ -31,6 +32,10 @@ while [[ $# -gt 0 ]]; do
       CLF_BATCH="${1#*=}"
       shift 1
       ;;
+    --force)
+      FORCE=1
+      shift 1
+      ;;
     *)
       echo "[warn] Unknown option: $1" >&2
       shift 1
@@ -40,11 +45,17 @@ done
 
 GEN_ARGS=()
 CLF_ARGS=()
+QC_ARGS=()
 if [[ -n "${GEN_BATCH}" ]]; then
   GEN_ARGS+=(--batch-size "${GEN_BATCH}")
 fi
 if [[ -n "${CLF_BATCH}" ]]; then
   CLF_ARGS+=(--batch-size "${CLF_BATCH}")
+fi
+if [[ "${FORCE}" -eq 1 ]]; then
+  GEN_ARGS+=(--force)
+  CLF_ARGS+=(--force)
+  QC_ARGS+=(--force)
 fi
 
 ensure_common_dirs
@@ -68,7 +79,7 @@ PY
 if ! ls runs/gen/*/ckpt.pt >/dev/null 2>&1; then
   die "generator checkpoints missing under runs/gen/*/ckpt.pt"
 fi
-"${PY[@]}" scripts/03_sample_and_qc.py
+"${PY[@]}" scripts/03_sample_and_qc.py "${QC_ARGS[@]}"
 if ! ls runs/synth/*.npz runs/synth_qc/*.npz >/dev/null 2>&1; then
   die "synthetic samples missing under runs/synth or runs/synth_qc"
 fi

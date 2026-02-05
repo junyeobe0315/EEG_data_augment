@@ -134,6 +134,17 @@ def p_tag(value: float) -> str:
     return str(float(value)).replace(".", "p")
 
 
+def parse_p_tag(value: str | float | int) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        raise ValueError("Empty p-tag value")
+    if "p" in s and "." not in s:
+        s = s.replace("p", ".")
+    return float(s)
+
+
 def split_file_path(root: str | Path, subject: int, seed: int, p: float) -> Path:
     split_dir = Path(root) / "data" / "splits"
     return split_dir / f"subject_{int(subject):02d}_seed_{int(seed)}_p_{p_tag(p)}.json"

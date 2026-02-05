@@ -12,10 +12,11 @@ from sklearn.model_selection import train_test_split
 
 ROOT = project_root(__file__)
 
+from src.config_utils import apply_paper_preset
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
-from src.utils import ensure_dir, load_yaml, make_exp_id, set_seed
+from src.utils import ensure_dir, load_json, load_yaml, make_exp_id, set_seed
 
 
 def _split_subject_index(
@@ -54,21 +55,6 @@ def _split_subject_index(
     }
 
 
-def _apply_paper_preset(clf_cfg: dict, model_type: str, epoch_cap: int) -> dict:
-    cfg = copy.deepcopy(clf_cfg)
-    cfg["model"]["type"] = model_type
-    pp = cfg.get("paper_presets", {}).get(model_type, {})
-    for key in ("epochs", "batch_size", "lr", "weight_decay", "num_workers", "device"):
-        if key in pp:
-            cfg["train"][key] = pp[key]
-    cfg.setdefault("train", {}).setdefault("step_control", {})["enabled"] = False
-    if "scheduler" in pp:
-        cfg["train"]["scheduler"] = copy.deepcopy(pp["scheduler"])
-    if int(epoch_cap) > 0:
-        cfg["train"]["epochs"] = min(int(cfg["train"]["epochs"]), int(epoch_cap))
-    return cfg
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run paper-faithful track (separate from main protocol).")
     ap.add_argument("--models", type=str, default="eegnet,svm,eeg_conformer,atcnet,ctnet")
@@ -76,6 +62,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--epoch-cap", type=int, default=0, help="Fast debug cap. 0 means full paper epochs.")
     ap.add_argument("--tag", type=str, default="", help="Optional suffix tag for output filenames.")
+    ap.add_argument("--force", action="store_true", help="Re-train even if outputs already exist.")
     args = ap.parse_args()
 
     clf_cfg = load_yaml(ROOT / "configs/clf.yaml")
@@ -101,7 +88,13 @@ def main() -> None:
         split_stratify = bool(paper_cfg.get("model_split_stratify", {}).get(model_type, True))
         aug_mode = str(paper_cfg["model_aug_mode"].get(model_type, "none"))
         norm_mode = str(paper_cfg.get("model_norm_mode", {}).get(model_type, pp_cfg["normalization"].get("mode", "channel_global")))
-        cfg = _apply_paper_preset(clf_cfg, model_type=model_type, epoch_cap=int(args.epoch_cap))
+        cfg = apply_paper_preset(
+            clf_cfg,
+            model_type=model_type,
+            epoch_cap=int(args.epoch_cap),
+            include_scheduler=True,
+            disable_step_control=True,
+        )
         cfg["augmentation"]["modes"] = [aug_mode]
         pp_cfg_model = copy.deepcopy(pp_cfg)
         pp_cfg_model["normalization"]["mode"] = norm_mode
@@ -124,16 +117,21 @@ def main() -> None:
                 val=val_ratio,
             )
             run_dir = ROOT / "runs/clf" / run_id
-            metrics = train_classifier(
-                split=split,
-                index_df=index_df,
-                clf_cfg=cfg,
-                preprocess_cfg=pp_cfg_model,
-                out_dir=run_dir,
-                mode=aug_mode,
-                ratio=0.0,
-                evaluate_test=True,
-            )
+            metrics_path = run_dir / "metrics.json"
+            if (not args.force) and metrics_path.exists():
+                metrics = load_json(metrics_path)
+                print(f"[skip] {run_dir.name} (metrics.json exists)")
+            else:
+                metrics = train_classifier(
+                    split=split,
+                    index_df=index_df,
+                    clf_cfg=cfg,
+                    preprocess_cfg=pp_cfg_model,
+                    out_dir=run_dir,
+                    mode=aug_mode,
+                    ratio=0.0,
+                    evaluate_test=True,
+                )
             rows.append(
                 {
                     "subject": subject,

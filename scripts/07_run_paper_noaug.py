@@ -11,24 +11,11 @@ import pandas as pd
 
 ROOT = project_root(__file__)
 
+from src.config_utils import apply_paper_preset
 from src.dataio import load_processed_index
 from src.models_clf import normalize_classifier_type
 from src.train_clf import train_classifier
 from src.utils import ensure_dir, load_json, load_yaml, make_exp_id, p_tag, set_seed, split_file_path
-
-
-def _apply_paper_preset(cfg: dict, model_type: str, epoch_cap: int | None) -> dict:
-    out = copy.deepcopy(cfg)
-    out["model"]["type"] = model_type
-    out["augmentation"]["modes"] = ["none"]
-
-    pp = out.get("paper_presets", {}).get(model_type, {})
-    for key in ("epochs", "batch_size", "lr", "weight_decay", "num_workers", "device"):
-        if key in pp:
-            out["train"][key] = pp[key]
-    if epoch_cap is not None and epoch_cap > 0:
-        out["train"]["epochs"] = min(int(out["train"]["epochs"]), int(epoch_cap))
-    return out
 
 
 def main() -> None:
@@ -43,6 +30,7 @@ def main() -> None:
         help="Comma-separated classifier list",
     )
     ap.add_argument("--epoch-cap", type=int, default=0, help="Optional cap for fast smoke run (0 = no cap).")
+    ap.add_argument("--force", action="store_true", help="Re-train even if outputs already exist.")
     args = ap.parse_args()
 
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
@@ -60,7 +48,8 @@ def main() -> None:
     model_list = [normalize_classifier_type(x.strip()) for x in args.models.split(",") if x.strip()]
     rows = []
     for model_type in model_list:
-        cfg = _apply_paper_preset(clf_cfg, model_type=model_type, epoch_cap=args.epoch_cap if args.epoch_cap > 0 else None)
+        cfg = apply_paper_preset(clf_cfg, model_type=model_type, epoch_cap=args.epoch_cap if args.epoch_cap > 0 else None)
+        cfg["augmentation"]["modes"] = ["none"]
         run_id = make_exp_id(
             "paper_none",
             subject=int(args.subject),
@@ -69,7 +58,12 @@ def main() -> None:
             clf=model_type,
         )
         run_dir = ROOT / "runs/clf" / run_id
-        metrics = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0, evaluate_test=True)
+        metrics_path = run_dir / "metrics.json"
+        if (not args.force) and metrics_path.exists():
+            metrics = load_json(metrics_path)
+            print(f"[skip] {run_dir.name} (metrics.json exists)")
+        else:
+            metrics = train_classifier(split, index_df, cfg, pp_cfg, run_dir, mode="none", ratio=0.0, evaluate_test=True)
         rows.append(
             {
                 "subject": int(args.subject),
