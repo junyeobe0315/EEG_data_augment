@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import copy
+import json
+import os
+from typing import Any
+
+import yaml
 
 
 def apply_paper_preset(
@@ -59,4 +64,70 @@ def build_gen_cfg(
     if override_batch_size is not None and override_batch_size > 0:
         cfg.setdefault("train", {})["batch_size"] = int(override_batch_size)
 
+    return cfg
+
+
+def _parse_override_value(raw: str) -> Any:
+    try:
+        return yaml.safe_load(raw)
+    except Exception:
+        return raw
+
+
+def parse_overrides(pairs: list[str]) -> dict[str, list[tuple[str, Any]]]:
+    overrides: dict[str, list[tuple[str, Any]]] = {}
+    for raw in pairs:
+        if "=" not in raw:
+            raise ValueError(f"Invalid override (expected key=value): {raw}")
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if "." not in key:
+            raise ValueError(f"Override key must start with config name (e.g., gen.train.lr): {key}")
+        cfg_name, path = key.split(".", 1)
+        cfg_name = cfg_name.strip()
+        path = path.strip()
+        if not cfg_name or not path:
+            raise ValueError(f"Invalid override key: {key}")
+        overrides.setdefault(cfg_name, []).append((path, _parse_override_value(value)))
+    return overrides
+
+
+def _split_override_env(raw: str) -> list[str]:
+    raw = raw.strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            items = json.loads(raw)
+            return [str(x) for x in items]
+        except Exception:
+            return [raw]
+    return [s for s in (x.strip() for x in raw.split(";")) if s]
+
+
+def load_overrides_from_env(env_key: str = "EEG_CFG_OVERRIDES") -> dict[str, list[tuple[str, Any]]]:
+    raw = os.environ.get(env_key, "")
+    if not raw:
+        return {}
+    return parse_overrides(_split_override_env(raw))
+
+
+def apply_overrides(cfg: dict, items: list[tuple[str, Any]]) -> dict:
+    for path, value in items:
+        keys = [k for k in str(path).split(".") if k]
+        if not keys:
+            continue
+        node = cfg
+        for k in keys[:-1]:
+            if k not in node or not isinstance(node[k], dict):
+                node[k] = {}
+            node = node[k]
+        node[keys[-1]] = value
+    return cfg
+
+
+def apply_env_overrides(cfg: dict, cfg_name: str, env_key: str = "EEG_CFG_OVERRIDES") -> dict:
+    overrides = load_overrides_from_env(env_key)
+    if cfg_name in overrides:
+        apply_overrides(cfg, overrides[cfg_name])
     return cfg

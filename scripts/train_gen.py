@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import sys
 from pathlib import Path
 
 try:
@@ -15,6 +18,7 @@ from src.config_utils import build_gen_cfg
 from src.dataio import load_processed_index
 from src.models_gen import normalize_generator_type
 from src.train_gen import train_generative_model
+from src.parallel import run_subprocess_tasks
 from src.utils import in_allowed_grid, load_json, load_yaml, make_exp_id, require_split_files, set_seed, stable_hash_seed
 
 
@@ -107,6 +111,30 @@ def _parse_args() -> argparse.Namespace:
         help="Re-train even if output checkpoint already exists.",
     )
     parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of parallel jobs (uses subprocess scheduling).",
+    )
+    parser.add_argument(
+        "--devices",
+        type=str,
+        default=None,
+        help="Comma-separated CUDA device list for parallel jobs.",
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Override config values (e.g., gen.train.batch_size=64).",
+    )
+    parser.add_argument(
         "--fast",
         action="store_true",
         help="Enable speed-oriented settings (AMP/TF32/pin_memory).",
@@ -162,8 +190,87 @@ def _apply_fast_overrides(run_cfg: dict, enable: bool) -> None:
     cuda_cfg.setdefault("matmul_precision", "high")
 
 
+def _parse_devices(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [d.strip() for d in str(raw).split(",") if d.strip()]
+
+
+def _parse_task(raw: str) -> dict | None:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid --task JSON: {raw}")
+
+
+def _build_task_cmd(args: argparse.Namespace, task: dict) -> list[str]:
+    cmd = [sys.executable, str(ROOT / "main.py"), "train-gen", "--task", json.dumps(task)]
+    if args.batch_size is not None:
+        cmd += ["--batch-size", str(args.batch_size)]
+    if args.epochs is not None:
+        cmd += ["--epochs", str(args.epochs)]
+    if args.lr is not None:
+        cmd += ["--lr", str(args.lr)]
+    if args.cvae_lr is not None:
+        cmd += ["--cvae-lr", str(args.cvae_lr)]
+    if args.gan_lr is not None:
+        cmd += ["--gan-lr", str(args.gan_lr)]
+    if args.ddpm_lr is not None:
+        cmd += ["--ddpm-lr", str(args.ddpm_lr)]
+    if args.optimizer is not None:
+        cmd += ["--optimizer", str(args.optimizer)]
+    if args.weight_decay is not None:
+        cmd += ["--weight-decay", str(args.weight_decay)]
+    if args.num_workers is not None:
+        cmd += ["--num-workers", str(args.num_workers)]
+    if args.device is not None:
+        cmd += ["--device", str(args.device)]
+    if args.force:
+        cmd.append("--force")
+    if args.fast:
+        cmd.append("--fast")
+    for item in args.set or []:
+        cmd += ["--set", item]
+    return cmd
+
+
+def _build_tasks(
+    gen_models: list[str],
+    split_files: list[Path],
+    split_cfg: dict,
+    data_cfg: dict,
+    force: bool,
+) -> list[dict]:
+    tasks: list[dict] = []
+    for gen_model in gen_models:
+        for sf in split_files:
+            split = load_json(sf)
+            if not in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
+                continue
+            subject = split.get("subject", "all")
+            p = split.get("low_data_frac", 1.0)
+            exp_id = make_exp_id(
+                "gen",
+                protocol=split.get("protocol", split_cfg["protocol"]),
+                subject=subject,
+                seed=split.get("seed", 0),
+                p=p,
+                split=sf.stem,
+                gen=gen_model,
+            )
+            out_dir = ROOT / "runs/gen" / exp_id
+            if (not force) and (out_dir / "ckpt.pt").exists():
+                continue
+            tasks.append({"gen_model": gen_model, "split_file": str(sf)})
+    return tasks
+
+
 def main() -> None:
     args = _parse_args()
+    if args.set:
+        os.environ["EEG_CFG_OVERRIDES"] = json.dumps(list(args.set))
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
     clf_cfg = load_yaml(ROOT / "configs/clf.yaml")
@@ -179,6 +286,28 @@ def main() -> None:
 
     # New protocol: subject/seed/p split files.
     split_files = require_split_files(ROOT, split_cfg)
+
+    task = _parse_task(args.task)
+    if task is not None:
+        gen_models = [normalize_generator_type(str(task["gen_model"]))]
+        split_files = [Path(task["split_file"])]
+        args.jobs = 1
+
+    if int(args.jobs) > 1 and task is None:
+        devices = _parse_devices(args.devices)
+        tasks = _build_tasks(gen_models, split_files, split_cfg=split_cfg, data_cfg=data_cfg, force=args.force)
+        if not tasks:
+            print("[info] No tasks to run.")
+            return
+        scheduled = []
+        for i, t in enumerate(tasks):
+            env = {}
+            if devices:
+                env["CUDA_VISIBLE_DEVICES"] = devices[i % len(devices)]
+            label = f"gen={t['gen_model']} split={Path(t['split_file']).stem}"
+            scheduled.append({"cmd": _build_task_cmd(args, t), "env": env, "label": label})
+        run_subprocess_tasks(scheduled, max_workers=int(args.jobs), label="train-gen")
+        return
 
     for gen_model in gen_models:
         run_cfg = build_gen_cfg(
@@ -234,4 +363,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from src.cli_deprecated import exit_deprecated
+    exit_deprecated("train-gen")

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -111,6 +113,17 @@ def _add_pipeline_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--print-steps", action="store_true", help="Print resolved steps and exit.")
     p.add_argument("--dry-run", action="store_true", help="Only show steps; do not execute.")
+    p.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Override config values (e.g., gen.train.batch_size=64).",
+    )
+    p.add_argument("--jobs", type=int, default=1, help="Default parallel jobs for train-gen/sample-qc/train-clf.")
+    p.add_argument("--gen-jobs", type=int, default=None, help="Parallel jobs for train-gen.")
+    p.add_argument("--qc-jobs", type=int, default=None, help="Parallel jobs for sample-qc.")
+    p.add_argument("--clf-jobs", type=int, default=None, help="Parallel jobs for train-clf.")
+    p.add_argument("--devices", type=str, default=None, help="Comma-separated CUDA device list for parallel jobs.")
 
     p.add_argument("--gen-batch", "--gen_batch", type=int, default=None, help="Override generator batch size.")
     p.add_argument("--gen-epochs", type=int, default=None, help="Override generator epochs.")
@@ -171,6 +184,13 @@ def _build_gen_args(args: argparse.Namespace) -> list[str]:
         out.append("--force")
     if args.fast:
         out.append("--fast")
+    for item in args.set or []:
+        out += ["--set", item]
+    gen_jobs = args.gen_jobs if args.gen_jobs is not None else args.jobs
+    if gen_jobs and int(gen_jobs) > 1:
+        out += ["--jobs", str(gen_jobs)]
+    if args.devices:
+        out += ["--devices", str(args.devices)]
     return out
 
 
@@ -194,11 +214,26 @@ def _build_clf_args(args: argparse.Namespace) -> list[str]:
         out.append("--force")
     if args.fast:
         out.append("--fast")
+    for item in args.set or []:
+        out += ["--set", item]
+    clf_jobs = args.clf_jobs if args.clf_jobs is not None else args.jobs
+    if clf_jobs and int(clf_jobs) > 1:
+        out += ["--jobs", str(clf_jobs)]
+    if args.devices:
+        out += ["--devices", str(args.devices)]
     return out
 
 
 def _build_qc_args(args: argparse.Namespace) -> list[str]:
-    return ["--force"] if args.force else []
+    out = ["--force"] if args.force else []
+    for item in args.set or []:
+        out += ["--set", item]
+    qc_jobs = args.qc_jobs if args.qc_jobs is not None else args.jobs
+    if qc_jobs and int(qc_jobs) > 1:
+        out += ["--jobs", str(qc_jobs)]
+    if args.devices:
+        out += ["--devices", str(args.devices)]
+    return out
 
 
 def _run_pipeline(args: argparse.Namespace) -> None:
@@ -258,6 +293,12 @@ def _add_forward_subcommand(
     help_text: str,
 ) -> None:
     sp = subparsers.add_parser(name, help=help_text)
+    sp.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Override config values (e.g., gen.train.batch_size=64).",
+    )
     sp.add_argument("args", nargs=argparse.REMAINDER, help="Arguments forwarded to the underlying command.")
     sp.set_defaults(func=lambda ns, _m=mod: _run_module(_m, list(ns.args)))
 
@@ -305,6 +346,9 @@ def main(argv: Iterable[str] | None = None) -> None:
     if not hasattr(args, "func"):
         parser.print_help()
         raise SystemExit(2)
+
+    if getattr(args, "set", None):
+        os.environ["EEG_CFG_OVERRIDES"] = json.dumps(list(args.set))
 
     args.func(args)
 

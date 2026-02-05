@@ -15,10 +15,16 @@ GEN_BATCH=""
 CLF_BATCH=""
 STEPS=""
 SKIP=""
+JOBS=""
+GEN_JOBS=""
+QC_JOBS=""
+CLF_JOBS=""
+DEVICES=""
 FORCE=0
 FAST=0
 DRY_RUN=0
 PRINT_STEPS=0
+PIPE_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gen_batch|--gen-batch)
@@ -53,6 +59,54 @@ while [[ $# -gt 0 ]]; do
       SKIP="${1#*=}"
       shift 1
       ;;
+    --set)
+      PIPE_ARGS+=(--set "$2")
+      shift 2
+      ;;
+    --set=*)
+      PIPE_ARGS+=(--set "${1#*=}")
+      shift 1
+      ;;
+    --jobs)
+      JOBS="$2"
+      shift 2
+      ;;
+    --jobs=*)
+      JOBS="${1#*=}"
+      shift 1
+      ;;
+    --gen-jobs)
+      GEN_JOBS="$2"
+      shift 2
+      ;;
+    --gen-jobs=*)
+      GEN_JOBS="${1#*=}"
+      shift 1
+      ;;
+    --qc-jobs)
+      QC_JOBS="$2"
+      shift 2
+      ;;
+    --qc-jobs=*)
+      QC_JOBS="${1#*=}"
+      shift 1
+      ;;
+    --clf-jobs)
+      CLF_JOBS="$2"
+      shift 2
+      ;;
+    --clf-jobs=*)
+      CLF_JOBS="${1#*=}"
+      shift 1
+      ;;
+    --devices)
+      DEVICES="$2"
+      shift 2
+      ;;
+    --devices=*)
+      DEVICES="${1#*=}"
+      shift 1
+      ;;
     --dry-run)
       DRY_RUN=1
       shift 1
@@ -79,7 +133,6 @@ done
 GEN_ARGS=()
 CLF_ARGS=()
 QC_ARGS=()
-PIPE_ARGS=()
 if [[ -n "${GEN_BATCH}" ]]; then
   GEN_ARGS+=(--batch-size "${GEN_BATCH}")
   PIPE_ARGS+=(--gen-batch "${GEN_BATCH}")
@@ -93,6 +146,21 @@ if [[ -n "${STEPS}" ]]; then
 fi
 if [[ -n "${SKIP}" ]]; then
   PIPE_ARGS+=(--skip "${SKIP}")
+fi
+if [[ -n "${JOBS}" ]]; then
+  PIPE_ARGS+=(--jobs "${JOBS}")
+fi
+if [[ -n "${GEN_JOBS}" ]]; then
+  PIPE_ARGS+=(--gen-jobs "${GEN_JOBS}")
+fi
+if [[ -n "${QC_JOBS}" ]]; then
+  PIPE_ARGS+=(--qc-jobs "${QC_JOBS}")
+fi
+if [[ -n "${CLF_JOBS}" ]]; then
+  PIPE_ARGS+=(--clf-jobs "${CLF_JOBS}")
+fi
+if [[ -n "${DEVICES}" ]]; then
+  PIPE_ARGS+=(--devices "${DEVICES}")
 fi
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   PIPE_ARGS+=(--dry-run)

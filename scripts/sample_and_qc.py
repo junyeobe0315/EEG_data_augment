@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
+import sys
 from pathlib import Path
 
 try:
@@ -20,6 +23,7 @@ from src.dataio import load_processed_index, load_samples_by_ids
 from src.models_gen import normalize_generator_type
 from src.qc import run_qc
 from src.sample_gen import sample_by_class, save_synth_npz
+from src.parallel import run_subprocess_tasks
 from src.utils import ensure_dir, in_allowed_grid, load_json, load_yaml, make_exp_id, require_split_files, save_json, set_seed, stable_hash_seed
 
 
@@ -105,11 +109,112 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Re-sample and re-run QC even if outputs already exist.",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of parallel jobs (uses subprocess scheduling).",
+    )
+    parser.add_argument(
+        "--devices",
+        type=str,
+        default=None,
+        help="Comma-separated CUDA device list for parallel jobs.",
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Override config values (e.g., qc.psd.z_threshold=2.0).",
+    )
     return parser.parse_args()
+
+
+def _parse_devices(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [d.strip() for d in str(raw).split(",") if d.strip()]
+
+
+def _parse_task(raw: str) -> dict | None:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid --task JSON: {raw}")
+
+
+def _build_task_cmd(args: argparse.Namespace, task: dict) -> list[str]:
+    cmd = [sys.executable, str(ROOT / "main.py"), "sample-qc", "--task", json.dumps(task)]
+    if args.force:
+        cmd.append("--force")
+    for item in args.set or []:
+        cmd += ["--set", item]
+    return cmd
+
+
+def _build_tasks(
+    gen_models: list[str],
+    split_files: list[Path],
+    split_cfg: dict,
+    data_cfg: dict,
+    force: bool,
+    qc_dir: Path,
+) -> list[dict]:
+    tasks: list[dict] = []
+    for gen_model in gen_models:
+        for sf in split_files:
+            split = load_json(sf)
+            if not in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
+                continue
+            kept_path = qc_dir / f"synth_qc_{gen_model}_{sf.stem}.npz"
+            report_path = kept_path.with_suffix(".report.json")
+            if (not force) and kept_path.exists() and report_path.exists():
+                continue
+            tasks.append({"gen_model": gen_model, "split_file": str(sf)})
+    return tasks
+
+
+def _collect_reports(
+    gen_models: list[str],
+    split_files: list[Path],
+    split_cfg: dict,
+    data_cfg: dict,
+    qc_dir: Path,
+    metric_dir: Path,
+) -> None:
+    reports = []
+    for gen_model in gen_models:
+        for sf in split_files:
+            split = load_json(sf)
+            if not in_allowed_grid(split, split_cfg=split_cfg, data_cfg=data_cfg):
+                continue
+            report_path = qc_dir / f"synth_qc_{gen_model}_{sf.stem}.report.json"
+            if not report_path.exists():
+                continue
+            report = load_json(report_path)
+            subject = split.get("subject", "all")
+            seed = int(split.get("seed", -1))
+            p = float(split.get("low_data_frac", 1.0))
+            reports.append({"split": sf.stem, "subject": subject, "seed": seed, "p": p, "gen_model": gen_model, **report})
+
+    if reports:
+        out_csv = metric_dir / f"qc_{split_cfg['protocol']}.csv"
+        pd.DataFrame(reports).to_csv(out_csv, index=False)
+        print(f"Saved QC report -> {out_csv}")
 
 
 def main() -> None:
     args = _parse_args()
+    if args.set:
+        os.environ["EEG_CFG_OVERRIDES"] = json.dumps(list(args.set))
     data_cfg = load_yaml(ROOT / "configs/data.yaml")
     gen_cfg = load_yaml(ROOT / "configs/gen.yaml")
     sweep_cfg = load_yaml(ROOT / "configs/sweep.yaml")
@@ -125,6 +230,36 @@ def main() -> None:
     metric_dir = ensure_dir(ROOT / "results/metrics")
 
     split_files = require_split_files(ROOT, split_cfg)
+
+    task = _parse_task(args.task)
+    if task is not None:
+        gen_models = [normalize_generator_type(str(task["gen_model"]))]
+        split_files = [Path(task["split_file"])]
+        args.jobs = 1
+
+    if int(args.jobs) > 1 and task is None:
+        devices = _parse_devices(args.devices)
+        tasks = _build_tasks(
+            gen_models,
+            split_files,
+            split_cfg=split_cfg,
+            data_cfg=data_cfg,
+            force=args.force,
+            qc_dir=qc_dir,
+        )
+        if not tasks:
+            print("[info] No tasks to run.")
+            return
+        scheduled = []
+        for i, t in enumerate(tasks):
+            env = {}
+            if devices:
+                env["CUDA_VISIBLE_DEVICES"] = devices[i % len(devices)]
+            label = f"qc={t['gen_model']} split={Path(t['split_file']).stem}"
+            scheduled.append({"cmd": _build_task_cmd(args, t), "env": env, "label": label})
+        run_subprocess_tasks(scheduled, max_workers=int(args.jobs), label="sample-qc")
+        _collect_reports(gen_models, split_files, split_cfg, data_cfg, qc_dir=qc_dir, metric_dir=metric_dir)
+        return
 
     reports = []
     for gen_model in gen_models:
@@ -245,4 +380,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from src.cli_deprecated import exit_deprecated
+    exit_deprecated("sample-qc")

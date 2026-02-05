@@ -11,10 +11,15 @@ import numpy as np
 import torch
 import yaml
 
+from src.config_utils import apply_env_overrides
+
 
 def load_yaml(path: str | Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    if cfg is None:
+        cfg = {}
+    return apply_env_overrides(cfg, Path(path).stem)
 
 
 def load_json(path: str | Path) -> Any:

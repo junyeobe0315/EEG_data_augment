@@ -95,4 +95,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from src.cli_deprecated import exit_deprecated
+    exit_deprecated("step1-noaug")

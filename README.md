@@ -64,6 +64,7 @@ pip install -r requirements.txt
 ```
 
 ## 7) Minimal Command Flow
+Note: CLI entrypoint is unified in `main.py`. Direct execution of `scripts/*.py` is disabled.
 
 ### A. Main pipeline
 ```bash
@@ -71,6 +72,13 @@ CONDA_ENV=EEG ./scripts/run_main_pipeline.sh
 
 # Speed-optimized (AMP/TF32/pin_memory) on GPU
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --fast
+
+# Parallel run (2 jobs) across splits/models
+CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --jobs 2 --devices 0,1
+
+# Runtime config overrides
+CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --set gen.train.batch_size=64 --set clf.train.lr=0.0005
+  # Format: <config>.<path>=<value>, where config is one of: data/gen/clf/qc/sweep/split/preprocess
 
 # Run a subset of steps
 CONDA_ENV=EEG ./scripts/run_main_pipeline.sh --steps train-gen,sample-qc,train-clf
