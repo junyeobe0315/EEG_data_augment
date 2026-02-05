@@ -51,6 +51,59 @@ def _model_section(cfg: Dict, model_type: str) -> Dict:
     return cfg.get("model", {})
 
 
+def _infer_model_kwargs(
+    model_type: str,
+    cfg: Dict,
+    in_channels: int,
+    time_steps: int,
+    num_classes: int,
+) -> dict[str, Any]:
+    model_type = normalize_generator_type(model_type)
+    if model_type == "cvae":
+        mcfg = _model_section(cfg, "cvae")
+        return {
+            "in_channels": in_channels,
+            "time_steps": time_steps,
+            "num_classes": num_classes,
+            "latent_dim": int(mcfg.get("latent_dim", 64)),
+            "hidden_dim": int(mcfg.get("hidden_dim", 128)),
+            "cond_dim": int(mcfg.get("cond_dim", 16)),
+        }
+    if model_type == "eeggan_net":
+        mcfg = _model_section(cfg, "eeggan_net")
+        return {
+            "in_channels": in_channels,
+            "time_steps": time_steps,
+            "num_classes": num_classes,
+            "latent_dim": int(mcfg.get("latent_dim", 128)),
+            "base_channels": int(mcfg.get("base_channels", 64)),
+            "cond_dim": int(mcfg.get("cond_dim", 16)),
+        }
+    if model_type == "cwgan_gp":
+        mcfg = _model_section(cfg, "cwgan_gp")
+        return {
+            "in_channels": in_channels,
+            "time_steps": time_steps,
+            "num_classes": num_classes,
+            "latent_dim": int(mcfg.get("latent_dim", 128)),
+            "base_channels": int(mcfg.get("base_channels", 64)),
+            "cond_dim": int(mcfg.get("cond_dim", 16)),
+        }
+    if model_type == "conditional_ddpm":
+        mcfg = _model_section(cfg, "conditional_ddpm")
+        return {
+            "in_channels": in_channels,
+            "time_steps": time_steps,
+            "num_classes": num_classes,
+            "base_channels": int(mcfg.get("base_channels", 64)),
+            "time_dim": int(mcfg.get("time_dim", 128)),
+            "diffusion_steps": int(mcfg.get("diffusion_steps", 200)),
+            "beta_start": float(mcfg.get("beta_start", 1e-4)),
+            "beta_end": float(mcfg.get("beta_end", 0.02)),
+        }
+    raise ValueError(f"Unsupported model type: {model_type}")
+
+
 def _train_cvae(
     dl: DataLoader,
     cfg: Dict,
@@ -61,14 +114,14 @@ def _train_cvae(
     log_path: Path,
     save_epoch_cb: SaveEpochCallback | None = None,
 ) -> tuple[dict, dict]:
-    mcfg = _model_section(cfg, "cvae")
+    model_kwargs = _infer_model_kwargs("cvae", cfg, in_channels, time_steps, num_classes)
     model = CVAE1D(
-        in_channels=in_channels,
-        time_steps=time_steps,
-        num_classes=num_classes,
-        latent_dim=int(mcfg.get("latent_dim", 64)),
-        hidden_dim=int(mcfg.get("hidden_dim", 128)),
-        cond_dim=int(mcfg.get("cond_dim", 16)),
+        in_channels=int(model_kwargs["in_channels"]),
+        time_steps=int(model_kwargs["time_steps"]),
+        num_classes=int(model_kwargs["num_classes"]),
+        latent_dim=int(model_kwargs["latent_dim"]),
+        hidden_dim=int(model_kwargs["hidden_dim"]),
+        cond_dim=int(model_kwargs["cond_dim"]),
     ).to(device)
 
     tcfg = cfg["train"]
@@ -104,14 +157,6 @@ def _train_cvae(
         if save_epoch_cb is not None:
             save_epoch_cb(ep, {"state_dict": model.state_dict()}, log_rec)
 
-    model_kwargs = {
-        "in_channels": in_channels,
-        "time_steps": time_steps,
-        "num_classes": num_classes,
-        "latent_dim": int(mcfg.get("latent_dim", 64)),
-        "hidden_dim": int(mcfg.get("hidden_dim", 128)),
-        "cond_dim": int(mcfg.get("cond_dim", 16)),
-    }
     return {"state_dict": model.state_dict()}, model_kwargs
 
 
@@ -125,10 +170,10 @@ def _train_eeggan(
     log_path: Path,
     save_epoch_cb: SaveEpochCallback | None = None,
 ) -> tuple[dict, dict]:
-    mcfg = _model_section(cfg, "eeggan_net")
-    latent_dim = int(mcfg.get("latent_dim", 128))
-    base_channels = int(mcfg.get("base_channels", 64))
-    cond_dim = int(mcfg.get("cond_dim", 16))
+    model_kwargs = _infer_model_kwargs("eeggan_net", cfg, in_channels, time_steps, num_classes)
+    latent_dim = int(model_kwargs["latent_dim"])
+    base_channels = int(model_kwargs["base_channels"])
+    cond_dim = int(model_kwargs["cond_dim"])
 
     gen = EEGGANNetGenerator(
         in_channels=in_channels,
@@ -203,14 +248,6 @@ def _train_eeggan(
                 log_rec,
             )
 
-    model_kwargs = {
-        "in_channels": in_channels,
-        "time_steps": time_steps,
-        "num_classes": num_classes,
-        "latent_dim": latent_dim,
-        "base_channels": base_channels,
-        "cond_dim": cond_dim,
-    }
     return {"generator_state_dict": gen.state_dict(), "discriminator_state_dict": dis.state_dict()}, model_kwargs
 
 
@@ -234,10 +271,10 @@ def _train_cwgan_gp(
     log_path: Path,
     save_epoch_cb: SaveEpochCallback | None = None,
 ) -> tuple[dict, dict]:
-    mcfg = _model_section(cfg, "cwgan_gp")
-    latent_dim = int(mcfg.get("latent_dim", 128))
-    base_channels = int(mcfg.get("base_channels", 64))
-    cond_dim = int(mcfg.get("cond_dim", 16))
+    model_kwargs = _infer_model_kwargs("cwgan_gp", cfg, in_channels, time_steps, num_classes)
+    latent_dim = int(model_kwargs["latent_dim"])
+    base_channels = int(model_kwargs["base_channels"])
+    cond_dim = int(model_kwargs["cond_dim"])
 
     gen = CWGANGenerator(
         in_channels=in_channels,
@@ -306,14 +343,6 @@ def _train_cwgan_gp(
         if save_epoch_cb is not None:
             save_epoch_cb(ep, {"generator_state_dict": gen.state_dict(), "critic_state_dict": critic.state_dict()}, log_rec)
 
-    model_kwargs = {
-        "in_channels": in_channels,
-        "time_steps": time_steps,
-        "num_classes": num_classes,
-        "latent_dim": latent_dim,
-        "base_channels": base_channels,
-        "cond_dim": cond_dim,
-    }
     return {"generator_state_dict": gen.state_dict(), "critic_state_dict": critic.state_dict()}, model_kwargs
 
 
@@ -327,12 +356,12 @@ def _train_conditional_ddpm(
     log_path: Path,
     save_epoch_cb: SaveEpochCallback | None = None,
 ) -> tuple[dict, dict]:
-    mcfg = _model_section(cfg, "conditional_ddpm")
-    base_channels = int(mcfg.get("base_channels", 64))
-    time_dim = int(mcfg.get("time_dim", 128))
-    diffusion_steps = int(mcfg.get("diffusion_steps", 200))
-    beta_start = float(mcfg.get("beta_start", 1e-4))
-    beta_end = float(mcfg.get("beta_end", 0.02))
+    model_kwargs = _infer_model_kwargs("conditional_ddpm", cfg, in_channels, time_steps, num_classes)
+    base_channels = int(model_kwargs["base_channels"])
+    time_dim = int(model_kwargs["time_dim"])
+    diffusion_steps = int(model_kwargs["diffusion_steps"])
+    beta_start = float(model_kwargs["beta_start"])
+    beta_end = float(model_kwargs["beta_end"])
 
     model = ConditionalDDPM1D(
         in_channels=in_channels,
@@ -372,16 +401,6 @@ def _train_conditional_ddpm(
         if save_epoch_cb is not None:
             save_epoch_cb(ep, {"state_dict": model.state_dict()}, log_rec)
 
-    model_kwargs = {
-        "in_channels": in_channels,
-        "time_steps": time_steps,
-        "num_classes": num_classes,
-        "base_channels": base_channels,
-        "time_dim": time_dim,
-        "diffusion_steps": diffusion_steps,
-        "beta_start": beta_start,
-        "beta_end": beta_end,
-    }
     return {"state_dict": model.state_dict()}, model_kwargs
 
 
@@ -823,7 +842,13 @@ def train_generative_model(
     checkpoint_every = max(1, checkpoint_every)
 
     ckpt_candidates: list[dict[str, Any]] = []
-    model_kwargs_ref: dict[str, Any] = {}
+    model_kwargs_ref: dict[str, Any] = _infer_model_kwargs(
+        model_type=model_type,
+        cfg=gen_cfg,
+        in_channels=in_channels,
+        time_steps=time_steps,
+        num_classes=num_classes,
+    )
 
     def save_epoch_cb(epoch: int, train_state: dict[str, Any], train_log: dict[str, float]) -> None:
         if epoch % checkpoint_every != 0 and epoch != epochs:
@@ -897,43 +922,23 @@ def train_generative_model(
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    model_kwargs_ref.update(model_kwargs)
-
-    # Ensure final epoch checkpoint exists even when callback fired before kwargs were populated.
-    final_payload = _build_ckpt_payload(
-        train_state=train_state,
-        model_type=model_type,
-        model_kwargs=model_kwargs,
-        norm=norm,
-        in_channels=in_channels,
-        time_steps=time_steps,
-        num_classes=num_classes,
-        gen_cfg=gen_cfg,
-        epoch=epochs,
-    )
     final_epoch_ckpt = ckpt_dir / f"epoch_{epochs:04d}.pt"
-    torch.save(final_payload, final_epoch_ckpt)
     if not any(Path(c["path"]) == final_epoch_ckpt for c in ckpt_candidates):
+        final_payload = _build_ckpt_payload(
+            train_state=train_state,
+            model_type=model_type,
+            model_kwargs=model_kwargs,
+            norm=norm,
+            in_channels=in_channels,
+            time_steps=time_steps,
+            num_classes=num_classes,
+            gen_cfg=gen_cfg,
+            epoch=epochs,
+        )
+        torch.save(final_payload, final_epoch_ckpt)
         ckpt_candidates.append({"epoch": epochs, "path": str(final_epoch_ckpt), "log": {"epoch": epochs}})
 
-    # Refresh candidate payloads to include model_kwargs metadata.
-    refreshed_candidates: list[dict[str, Any]] = []
-    for c in ckpt_candidates:
-        cp = Path(c["path"])
-        old = torch.load(cp, map_location="cpu", weights_only=False)
-        payload = {
-            **old,
-            "model_type": model_type,
-            "model_kwargs": model_kwargs,
-            "normalizer": norm.state_dict(),
-            "shape": {"c": in_channels, "t": time_steps},
-            "num_classes": num_classes,
-            "gen_cfg": gen_cfg,
-            "epoch": int(c.get("epoch", old.get("epoch", -1))),
-        }
-        torch.save(payload, cp)
-        refreshed_candidates.append({"epoch": int(payload["epoch"]), "path": str(cp), "log": c.get("log", {})})
-    ckpt_candidates = sorted(refreshed_candidates, key=lambda x: int(x["epoch"]))
+    ckpt_candidates = sorted(ckpt_candidates, key=lambda x: int(x["epoch"]))
 
     with open(exp_dir / "ckpt_list.json", "w", encoding="utf-8") as f:
         json.dump(ckpt_candidates, f, ensure_ascii=True, indent=2)
