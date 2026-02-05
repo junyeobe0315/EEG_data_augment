@@ -56,13 +56,13 @@ vram_presets:
       diffusion_steps: 1000
   "15gb":
     cvae:
-      batch_size: 256
+      batch_size: 512
     eeggan_net:
-      batch_size: 128
+      batch_size: 256
     cwgan_gp:
-      batch_size: 64
+      batch_size: 128
     conditional_ddpm:
-      batch_size: 24
+      batch_size: 64
       ddpm_steps: 500
       diffusion_steps: 1000
 

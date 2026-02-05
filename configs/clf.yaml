@@ -117,19 +117,19 @@ vram_presets:
       batch_size: 16
   15gb:
     eegnet:
-      batch_size: 256
+      batch_size: 512
     eegnet_tf_faithful:
-      batch_size: 256
+      batch_size: 512
     svm:
       batch_size: 0
     eeg_conformer:
-      batch_size: 48
+      batch_size: 64
     atcnet:
-      batch_size: 48
+      batch_size: 64
     atcnet_tf_faithful:
-      batch_size: 48
+      batch_size: 64
     ctnet:
-      batch_size: 32
+      batch_size: 48
 train:
   epochs: 80
   batch_size: 32
