@@ -67,3 +67,19 @@ def proportional_allocation(counts: np.ndarray, total: int) -> np.ndarray:
         order = np.argsort(-frac)
         base[order[:remain]] += 1
     return base.astype(np.int64)
+
+
+def build_ckpt_payload(
+    norm: Any,
+    shape: Dict[str, int],
+    n_classes: int,
+    extra: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    payload = {
+        "normalizer": norm.state_dict(),
+        "shape": dict(shape),
+        "n_classes": int(n_classes),
+    }
+    if extra:
+        payload.update(extra)
+    return payload

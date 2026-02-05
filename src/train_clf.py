@@ -19,7 +19,7 @@ from src.models_clf import (
     normalize_classifier_type,
 )
 from src.preprocess import ZScoreNormalizer
-from src.utils import append_jsonl, ensure_dir, proportional_allocation, resolve_device
+from src.utils import append_jsonl, build_ckpt_payload, ensure_dir, proportional_allocation, resolve_device
 
 
 def _classical_augment_numpy(
@@ -300,22 +300,6 @@ def _evaluate_svm(model, x: np.ndarray, y: np.ndarray):
     return compute_metrics(y, pred)
 
 
-def _base_clf_ckpt_payload(
-    model_type: str,
-    mode: str,
-    norm: ZScoreNormalizer,
-    shape: dict,
-    n_classes: int,
-) -> dict:
-    return {
-        "normalizer": norm.state_dict(),
-        "shape": shape,
-        "n_classes": int(n_classes),
-        "mode": mode,
-        "model_type": model_type,
-    }
-
-
 def train_classifier(
     split: Dict,
     index_df: pd.DataFrame,
@@ -447,12 +431,11 @@ def train_classifier(
             return cur < best
         return cur > best
 
-    ckpt_base = _base_clf_ckpt_payload(
-        model_type=model_type,
-        mode=mode,
+    ckpt_base = build_ckpt_payload(
         norm=norm,
         shape=shape,
         n_classes=n_classes,
+        extra={"mode": mode, "model_type": model_type},
     )
 
     if is_sklearn_model(model_type):

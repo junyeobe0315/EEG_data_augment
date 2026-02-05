@@ -12,7 +12,7 @@ from src.dataio import load_samples_by_ids
 from src.eval import compute_metrics
 from src.models_official_faithful import ATCNetOfficialFaithful, build_faithful_model
 from src.preprocess import ZScoreNormalizer
-from src.utils import append_jsonl, ensure_dir, resolve_device
+from src.utils import append_jsonl, build_ckpt_payload, ensure_dir, resolve_device
 
 
 def _evaluate(
@@ -62,11 +62,20 @@ def train_faithful_classifier(
 
     device = resolve_device(train_cfg.get("device", "auto"))
 
+    n_classes = int(np.max(y_train)) + 1
+    shape = {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])}
+    ckpt_base = build_ckpt_payload(
+        norm=norm,
+        shape=shape,
+        n_classes=n_classes,
+        extra={"model_key": model_key},
+    )
+
     model = build_faithful_model(
         model_key=model_key,
         n_ch=int(x_train.shape[1]),
         n_t=int(x_train.shape[2]),
-        n_classes=int(np.max(y_train)) + 1,
+        n_classes=n_classes,
         model_cfg=model_cfg,
     ).to(device)
 
@@ -130,13 +139,7 @@ def train_faithful_classifier(
         if float(val["loss"]) < best_val:
             best_val = float(val["loss"])
             torch.save(
-                {
-                    "state_dict": model.state_dict(),
-                    "normalizer": norm.state_dict(),
-                    "shape": {"c": int(x_train.shape[1]), "t": int(x_train.shape[2])},
-                    "n_classes": int(np.max(y_train)) + 1,
-                    "model_key": model_key,
-                },
+                {"state_dict": model.state_dict(), **ckpt_base},
                 best_path,
             )
 
