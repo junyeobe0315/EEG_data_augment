@@ -1,0 +1,33 @@
+type: ctnet
+model:
+  emb_size: 40
+  n_heads: 8
+  n_layers: 3
+  F1: 20
+  D: 2
+  kernel_length: 64
+  sep_kernel_length: 16
+  pool1: 8
+  pool2: 8
+  dropout: 0.3
+  pos_dropout: 0.1
+  ff_mult: 4
+train:
+  epochs: 200
+  batch_size: 16
+  lr: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  step_control:
+    enabled: true
+    total_steps: 2000
+    steps_per_eval: 100
+  amp:
+    enabled: false
+    dtype: float16
+  cuda:
+    tf32: false
+    matmul_precision: high
+evaluation:
+  best_metric: kappa
+  best_direction: max

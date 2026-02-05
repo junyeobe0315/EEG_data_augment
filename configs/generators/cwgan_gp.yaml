@@ -1,0 +1,32 @@
+type: cwgan_gp
+model:
+  latent_dim: 128
+  base_channels: 64
+  cond_dim: 16
+train:
+  epochs: 200
+  batch_size: 32
+  lr: 0.0002
+  weight_decay: 1.0e-5
+  n_critic: 3
+  lambda_gp: 10.0
+  num_workers: 0
+  amp:
+    enabled: false
+    dtype: float16
+sample:
+  n_per_class: 300
+  dynamic_n_per_class: true
+  dynamic_buffer: 1.2
+checkpoint_selection:
+  enabled: true
+  metric: bal_acc
+  alpha_ratio_ref: 1.0
+  sample_n_per_class: 50
+  qc_enabled: true
+  overgen_buffer: 1.2
+  proxy_classifier:
+    model: eegnet
+    steps: 120
+    batch_size: 64
+    lr: 0.001

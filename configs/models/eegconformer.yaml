@@ -1,0 +1,31 @@
+type: eegconformer
+model:
+  conv_channels: 40
+  emb_size: 40
+  n_heads: 10
+  n_layers: 6
+  temporal_kernel: 25
+  pool_kernel: 75
+  pool_stride: 15
+  fc1: 256
+  fc2: 32
+  dropout: 0.5
+train:
+  epochs: 200
+  batch_size: 24
+  lr: 0.0005
+  weight_decay: 0.0001
+  num_workers: 0
+  step_control:
+    enabled: true
+    total_steps: 2000
+    steps_per_eval: 100
+  amp:
+    enabled: false
+    dtype: float16
+  cuda:
+    tf32: false
+    matmul_precision: high
+evaluation:
+  best_metric: kappa
+  best_direction: max

@@ -11,4 +11,5 @@ resample:
 normalization:
   mode: channel_global
   method: zscore
+  train_only: true
   eps: 1.0e-6

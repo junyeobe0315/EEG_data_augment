@@ -5,4 +5,10 @@ psd:
 covariance:
   enabled: true
   dist_threshold_quantile: 0.95
-target_keep_ratio: 0.5
+
+# If QC is too strict, optionally relax to keep at least this ratio.
+# Set to 0.0 to disable relaxation.
+target_keep_ratio: 0.0
+
+# Oversampling control
+max_attempt_factor: 3.0
