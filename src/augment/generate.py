@@ -86,3 +86,63 @@ def build_synthetic_with_qc(
     if xs:
         return np.concatenate(xs, axis=0), np.concatenate(ys, axis=0), report
     return np.empty((0,)), np.empty((0,)), report
+
+
+def build_synthetic_pool(
+    sample_fn,
+    target_counts: dict[int, int],
+    qc_state: dict | None,
+    qc_cfg: dict,
+    sfreq: int,
+    buffer: float = 1.2,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Build a reusable synthetic pool (optionally QC-filtered)."""
+    x_pool, y_pool, report = build_synthetic_with_qc(
+        sample_fn=sample_fn,
+        target_counts=target_counts,
+        qc_state=qc_state,
+        qc_cfg=qc_cfg,
+        sfreq=sfreq,
+        buffer=buffer,
+    )
+    report["pool_size"] = int(len(x_pool))
+    return x_pool, y_pool, report
+
+
+def select_from_pool(
+    x_pool: np.ndarray,
+    y_pool: np.ndarray,
+    target_counts: dict[int, int],
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Select class-wise subsets from a synthetic pool for a specific alpha_ratio."""
+    rng = np.random.default_rng(int(seed))
+    xs = []
+    ys = []
+    report = {
+        "class_counts_pool": {},
+        "class_counts_used": {},
+        "pool_exhausted": False,
+    }
+    for cls, target in target_counts.items():
+        cls = int(cls)
+        target = int(target)
+        idx = np.where(y_pool == cls)[0]
+        report["class_counts_pool"][str(cls)] = int(len(idx))
+        if target <= 0 or len(idx) == 0:
+            report["class_counts_used"][str(cls)] = 0
+            continue
+        if len(idx) <= target:
+            choose = idx
+            report["pool_exhausted"] = True
+        else:
+            choose = rng.choice(idx, size=target, replace=False)
+        x_sel = x_pool[choose]
+        y_sel = np.full((len(x_sel),), cls, dtype=np.int64)
+        xs.append(x_sel)
+        ys.append(y_sel)
+        report["class_counts_used"][str(cls)] = int(len(x_sel))
+
+    if xs:
+        return np.concatenate(xs, axis=0), np.concatenate(ys, axis=0), report
+    return np.empty((0,)), np.empty((0,)), report

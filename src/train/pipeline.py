@@ -7,7 +7,12 @@ from typing import Any
 import numpy as np
 import torch
 
-from src.augment.generate import compute_target_counts, build_synthetic_with_qc
+from src.augment.generate import (
+    compute_target_counts,
+    build_synthetic_with_qc,
+    build_synthetic_pool,
+    select_from_pool,
+)
 from src.data.dataset import load_index, load_samples
 from src.data.normalize import ZScoreNormalizer
 from src.data.subsample import load_split_indices
@@ -242,14 +247,68 @@ def run_experiment(
                     ddpm_steps=ddpm_steps,
                 )
 
-            x_syn, y_syn, qc_report = build_synthetic_with_qc(
-                sample_fn=_sample_fn,
-                target_counts=target_counts,
-                qc_state=qc_state if qc_on else None,
-                qc_cfg=qc_cfg,
-                sfreq=int(dataset_cfg.get("sfreq", 250)),
-                buffer=buffer,
-            )
+            pool_cfg = gen_cfg.get("pool", {})
+            pool_enabled = bool(pool_cfg.get("enabled", False))
+            pool_alpha = float(pool_cfg.get("alpha_ratio_max", alpha_ratio))
+            if pool_alpha < alpha_ratio:
+                pool_alpha = float(alpha_ratio)
+
+            x_syn = np.empty((0,))
+            y_syn = np.empty((0,))
+            pool_report: dict[str, Any] = {}
+            select_report: dict[str, Any] = {}
+
+            if pool_enabled and pool_alpha > 0.0:
+                pool_tag = f"pool_alpha_{pool_alpha:g}_qc_{int(qc_on)}"
+                pool_npz = gen_run_dir / f"{pool_tag}.npz"
+                pool_meta = gen_run_dir / f"{pool_tag}.json"
+
+                if pool_npz.exists():
+                    arr = np.load(pool_npz)
+                    x_pool = arr["X"]
+                    y_pool = arr["y"]
+                    if pool_meta.exists():
+                        try:
+                            import json
+
+                            pool_report = json.loads(pool_meta.read_text())
+                        except Exception:
+                            pool_report = {}
+                else:
+                    target_counts_pool = compute_target_counts(y_train, pool_alpha)
+                    x_pool, y_pool, pool_report = build_synthetic_pool(
+                        sample_fn=_sample_fn,
+                        target_counts=target_counts_pool,
+                        qc_state=qc_state if qc_on else None,
+                        qc_cfg=qc_cfg,
+                        sfreq=int(dataset_cfg.get("sfreq", 250)),
+                        buffer=buffer,
+                    )
+                    np.savez_compressed(pool_npz, X=x_pool, y=y_pool)
+                    try:
+                        write_json(pool_meta, pool_report)
+                    except Exception:
+                        pass
+
+                select_seed = stable_hash_seed(seed, {"alpha_ratio": alpha_ratio, "pool_tag": pool_tag})
+                x_syn, y_syn, select_report = select_from_pool(
+                    x_pool=x_pool,
+                    y_pool=y_pool,
+                    target_counts=target_counts,
+                    seed=select_seed,
+                )
+
+                qc_report = dict(pool_report)
+                qc_report.update(select_report)
+            else:
+                x_syn, y_syn, qc_report = build_synthetic_with_qc(
+                    sample_fn=_sample_fn,
+                    target_counts=target_counts,
+                    qc_state=qc_state if qc_on else None,
+                    qc_cfg=qc_cfg,
+                    sfreq=int(dataset_cfg.get("sfreq", 250)),
+                    buffer=buffer,
+                )
             synth_data = (x_syn, y_syn)
             ratio_effective = float(len(x_syn) / max(1, len(x_train)))
             alpha_mix_effective = alpha_ratio_to_mix(ratio_effective)

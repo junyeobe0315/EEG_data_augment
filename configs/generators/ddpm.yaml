@@ -31,3 +31,7 @@ checkpoint_selection:
     steps: 120
     batch_size: 64
     lr: 0.001
+
+pool:
+  enabled: true
+  alpha_ratio_max: 2.0
