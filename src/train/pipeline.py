@@ -32,6 +32,61 @@ def _resolve_device(train_cfg: dict) -> str:
     return req
 
 
+def _resolve_batch_size(train_cfg: dict, r: float) -> int:
+    """Resolve batch size with optional r-dependent logic.
+
+    Supported (optional) keys in train_cfg:
+    - batch_size_by_r: mapping of {r_value: batch_size}, chooses max r_value <= r.
+    - batch_size_scale_with_r: bool, scales base batch_size by r / r_ref.
+      r_ref defaults to 0.1, min_scale defaults to 1.0, max_scale optional.
+    """
+    base = int(train_cfg.get("batch_size", 32))
+    by_r = train_cfg.get("batch_size_by_r")
+    if isinstance(by_r, dict) and by_r:
+        items = sorted((float(k), int(v)) for k, v in by_r.items())
+        chosen = items[0][1]
+        for rk, bs in items:
+            if r >= rk:
+                chosen = bs
+        return max(1, int(chosen))
+    if bool(train_cfg.get("batch_size_scale_with_r", False)):
+        r_ref = float(train_cfg.get("batch_size_r_ref", 0.1))
+        min_scale = float(train_cfg.get("batch_size_min_scale", 1.0))
+        max_scale = train_cfg.get("batch_size_max_scale")
+        scale = max(min_scale, float(r) / max(r_ref, 1e-6))
+        if max_scale is not None:
+            scale = min(scale, float(max_scale))
+        return max(1, int(round(base * scale)))
+    return base
+
+
+def _generator_run_id(
+    subject: int,
+    seed: int,
+    r: float,
+    generator: str,
+    dataset_cfg: dict,
+    preprocess_cfg: dict,
+    gen_cfg: dict,
+) -> str:
+    payload = {
+        "dataset": dataset_cfg.get("name", "bci2a"),
+        "subject": subject,
+        "seed": seed,
+        "r": r,
+        "generator": generator,
+        "gen_model": gen_cfg.get("model", {}),
+        "gen_train": gen_cfg.get("train", {}),
+        "preprocess": preprocess_cfg,
+    }
+    return config_hash(payload)
+
+
+def _list_ckpts(gen_run_dir: Path) -> list[str]:
+    ckpts = sorted(gen_run_dir.glob("ckpt_epoch_*.pt"))
+    return [str(p) for p in ckpts]
+
+
 def run_experiment(
     subject: int,
     seed: int,
@@ -107,39 +162,65 @@ def run_experiment(
             alpha_mix_effective = 0.0
         else:
             gen_cfg = gen_cfgs[generator]
-            gen_run_dir = ensure_dir(Path("./artifacts/checkpoints") / run_id)
-            gen_seed = stable_hash_seed(seed, {"generator": generator, "subject": subject, "r": r})
-            gen_train = train_generator(
-                x_train=x_train,
-                y_train=y_train,
-                model_type=generator,
-                model_cfg=gen_cfg["model"],
-                train_cfg=gen_cfg["train"],
-                run_dir=gen_run_dir,
-                seed=gen_seed,
+            gen_id = _generator_run_id(
+                subject=subject,
+                seed=seed,
+                r=r,
+                generator=generator,
+                dataset_cfg=dataset_cfg,
+                preprocess_cfg=preprocess_cfg,
+                gen_cfg=gen_cfg,
             )
+            gen_run_dir = ensure_dir(Path("./artifacts/checkpoints") / f"gen_{gen_id}")
+            gen_seed = stable_hash_seed(seed, {"generator": generator, "subject": subject, "r": r})
 
-            ckpts = gen_train.get("ckpts", [])
+            ckpts = _list_ckpts(gen_run_dir)
+            if not ckpts:
+                gen_train_cfg = dict(gen_cfg["train"])
+                gen_train_cfg["batch_size"] = _resolve_batch_size(gen_train_cfg, r)
+                gen_train = train_generator(
+                    x_train=x_train,
+                    y_train=y_train,
+                    model_type=generator,
+                    model_cfg=gen_cfg["model"],
+                    train_cfg=gen_train_cfg,
+                    run_dir=gen_run_dir,
+                    seed=gen_seed,
+                )
+                ckpts = gen_train.get("ckpts", [])
+                if not ckpts:
+                    ckpts = _list_ckpts(gen_run_dir)
+
             if not ckpts:
                 raise RuntimeError("No generator checkpoints produced.")
 
             ckpt_sel_cfg = gen_cfg.get("checkpoint_selection", {})
             if ckpt_sel_cfg.get("enabled", True):
-                proxy_dir = ensure_dir(run_dir / "proxy_ckpt")
-                sel = select_best_checkpoint(
-                    ckpt_paths=ckpts,
-                    x_train=x_train,
-                    y_train=y_train,
-                    x_val=x_val,
-                    y_val=y_val,
-                    gen_cfg=gen_cfg,
-                    proxy_model_cfg=model_cfgs["eegnet"]["model"],
-                    qc_cfg=qc_cfg,
-                    num_classes=num_classes,
-                    run_dir=proxy_dir,
-                    seed=gen_seed,
-                )
-                best_ckpt = sel.get("best_ckpt") or ckpts[-1]
+                best_ckpt_path = gen_run_dir / "best_ckpt.json"
+                if best_ckpt_path.exists():
+                    try:
+                        import json
+
+                        best_ckpt = json.loads(best_ckpt_path.read_text()).get("best_ckpt")
+                    except Exception:
+                        best_ckpt = None
+                    if not best_ckpt:
+                        best_ckpt = ckpts[-1]
+                else:
+                    sel = select_best_checkpoint(
+                        ckpt_paths=ckpts,
+                        x_train=x_train,
+                        y_train=y_train,
+                        x_val=x_val,
+                        y_val=y_val,
+                        gen_cfg=gen_cfg,
+                        proxy_model_cfg=model_cfgs["eegnet"]["model"],
+                        qc_cfg=qc_cfg,
+                        num_classes=num_classes,
+                        run_dir=gen_run_dir,
+                        seed=gen_seed,
+                    )
+                    best_ckpt = sel.get("best_ckpt") or ckpts[-1]
             else:
                 best_ckpt = ckpts[-1]
 
@@ -203,7 +284,8 @@ def run_experiment(
                 )
 
     model_cfg = model_cfgs[classifier]["model"]
-    train_cfg = model_cfgs[classifier]["train"]
+    train_cfg = dict(model_cfgs[classifier]["train"])
+    train_cfg["batch_size"] = _resolve_batch_size(train_cfg, r)
     eval_cfg = model_cfgs[classifier]["evaluation"]
 
     evaluate_test = stage in {"final_eval", "full"}
