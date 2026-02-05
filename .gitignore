@@ -24,6 +24,7 @@ BCICIV_2a_gdf/
 data/raw/
 data/processed/
 data/splits/
+artifacts/
 runs/
 results/
 
