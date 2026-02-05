@@ -19,7 +19,7 @@ model:
   conditional_ddpm:
     base_channels: 64
     time_dim: 128
-    diffusion_steps: 200
+    diffusion_steps: 1000
     beta_start: 1.0e-4
     beta_end: 0.02
 
@@ -37,8 +37,8 @@ vram_presets:
     conditional_ddpm:
       batch_size: 8
       n_per_class: 120
-      ddpm_steps: 60
-      diffusion_steps: 200
+      ddpm_steps: 500
+      diffusion_steps: 1000
   "7gb":
     cvae:
       batch_size: 96
@@ -52,8 +52,8 @@ vram_presets:
     conditional_ddpm:
       batch_size: 12
       n_per_class: 180
-      ddpm_steps: 80
-      diffusion_steps: 240
+      ddpm_steps: 500
+      diffusion_steps: 1000
   "15gb":
     cvae:
       batch_size: 256
@@ -63,10 +63,12 @@ vram_presets:
       batch_size: 64
     conditional_ddpm:
       batch_size: 24
+      ddpm_steps: 500
+      diffusion_steps: 1000
 
 train:
-  epochs: 50
-  checkpoint_every: 10
+  epochs: 200
+  checkpoint_every: 20
   batch_size: 32
   lr: 0.001
   cvae_lr: 0.001
@@ -82,7 +84,7 @@ train:
 
 sample:
   n_per_class: 300
-  ddpm_steps: 100
+  ddpm_steps: 500
   dynamic_n_per_class: true
   dynamic_buffer: 1.2
 
