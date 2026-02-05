@@ -14,9 +14,10 @@ from src.models_gen import (
     normalize_generator_type,
 )
 from src.preprocess import ZScoreNormalizer
+from src.utils import resolve_device
 
 
-def load_generator(ckpt_path: str | Path, device: str = "cpu") -> Tuple[Any, ZScoreNormalizer, Dict]:
+def load_generator(ckpt_path: str | Path, device: str | torch.device = "cpu") -> Tuple[Any, ZScoreNormalizer, Dict]:
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model_type = normalize_generator_type(str(ckpt.get("model_type", ckpt["gen_cfg"]["model"].get("type", "cvae"))))
     kwargs = dict(ckpt.get("model_kwargs", {}))
@@ -73,8 +74,7 @@ def sample_by_class(
     num_classes: int,
     device: str = "auto",
 ) -> Dict[str, np.ndarray]:
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = resolve_device(device)
     model, norm, ckpt = load_generator(ckpt_path, device=device)
     model_type = normalize_generator_type(str(ckpt.get("model_type", "cvae")))
 

@@ -19,7 +19,7 @@ from src.models_clf import (
     normalize_classifier_type,
 )
 from src.preprocess import ZScoreNormalizer
-from src.utils import append_jsonl, ensure_dir
+from src.utils import append_jsonl, ensure_dir, proportional_allocation, resolve_device
 
 
 def _classical_augment_numpy(
@@ -161,21 +161,6 @@ def _build_offline_augmented_bank(
     return np.empty((0, x_train.shape[1], x_train.shape[2]), dtype=np.float32), np.empty((0,), dtype=np.int64)
 
 
-def _proportional_allocation(counts: np.ndarray, total: int) -> np.ndarray:
-    counts = counts.astype(np.float64)
-    out = np.zeros_like(counts, dtype=np.int64)
-    if total <= 0 or float(counts.sum()) <= 0:
-        return out
-    raw = counts / counts.sum() * float(total)
-    base = np.floor(raw).astype(np.int64)
-    remain = int(total - int(base.sum()))
-    if remain > 0:
-        frac = raw - base
-        order = np.argsort(-frac)
-        base[order[:remain]] += 1
-    return base.astype(np.int64)
-
-
 def _sample_gen_aug_class_conditional(
     sx_raw: np.ndarray,
     sy: np.ndarray,
@@ -206,7 +191,7 @@ def _sample_gen_aug_class_conditional(
     n_classes = int(max(np.max(y_real), np.max(sy))) + 1
 
     real_counts = np.bincount(y_real, minlength=n_classes)
-    target_counts = _proportional_allocation(real_counts, n_add)
+    target_counts = proportional_allocation(real_counts, n_add)
     pool_counts = np.bincount(sy, minlength=n_classes)
 
     missing = [int(c) for c in range(n_classes) if target_counts[c] > 0 and pool_counts[c] <= 0]
@@ -527,10 +512,7 @@ def train_classifier(
             json.dump(out, f, ensure_ascii=True, indent=2)
         return out
 
-    dev = str(clf_cfg["train"].get("device", "auto"))
-    if dev == "auto":
-        dev = "cuda" if torch.cuda.is_available() else "cpu"
-    device = torch.device(dev)
+    device = resolve_device(clf_cfg["train"].get("device", "auto"))
 
     model = build_torch_classifier(
         model_type=model_type,

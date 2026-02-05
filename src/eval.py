@@ -12,6 +12,7 @@ from sklearn.metrics import accuracy_score, balanced_accuracy_score, cohen_kappa
 from src.dataio import load_samples_by_ids
 from src.models_clf import build_torch_classifier, normalize_classifier_type
 from src.preprocess import ZScoreNormalizer
+from src.utils import resolve_device
 
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
@@ -48,9 +49,7 @@ def evaluate_saved_classifier(
         return compute_metrics(y_test, y_pred)
 
     if ckpt_pt.exists():
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        tdev = torch.device(device)
+        tdev = resolve_device(device)
 
         ckpt = torch.load(ckpt_pt, map_location=tdev, weights_only=False)
         model_type = normalize_classifier_type(str(ckpt.get("model_type", clf_cfg["model"].get("type", "eegnet"))))

@@ -25,17 +25,10 @@ from src.models_gen import (
 from src.preprocess import ZScoreNormalizer
 from src.qc import run_qc
 from src.sample_gen import sample_by_class
-from src.utils import append_jsonl, ensure_dir, set_seed
+from src.utils import append_jsonl, ensure_dir, proportional_allocation, resolve_device, set_seed
 
 
 SaveEpochCallback = Callable[[int, dict[str, Any], dict[str, float]], None]
-
-
-def _resolve_device(cfg: Dict) -> torch.device:
-    dev = str(cfg["train"].get("device", "auto"))
-    if dev == "auto":
-        dev = "cuda" if torch.cuda.is_available() else "cpu"
-    return torch.device(dev)
 
 
 def _make_loader(x_train: np.ndarray, y_train: np.ndarray, batch_size: int, num_workers: int) -> DataLoader:
@@ -446,10 +439,7 @@ def _quick_proxy_eval(
     total_steps = int(proxy_cfg.get("steps", 120))
     lr = float(proxy_cfg.get("lr", 1e-3))
 
-    dev = str(clf_cfg.get("train", {}).get("device", "auto"))
-    if dev == "auto":
-        dev = "cuda" if torch.cuda.is_available() else "cpu"
-    device = torch.device(dev)
+    device = resolve_device(clf_cfg.get("train", {}).get("device", "auto"))
 
     proxy_model_cfg = clf_cfg.get("proxy_model", clf_cfg.get("model", {}))
     model = build_torch_classifier(
@@ -493,21 +483,6 @@ def _quick_proxy_eval(
     return score, metrics
 
 
-def _proportional_allocation(counts: np.ndarray, total: int) -> np.ndarray:
-    counts = counts.astype(np.float64)
-    out = np.zeros_like(counts, dtype=np.int64)
-    if total <= 0 or float(counts.sum()) <= 0:
-        return out
-    raw = counts / counts.sum() * float(total)
-    base = np.floor(raw).astype(np.int64)
-    remain = int(total - int(base.sum()))
-    if remain > 0:
-        frac = raw - base
-        order = np.argsort(-frac)
-        base[order[:remain]] += 1
-    return base.astype(np.int64)
-
-
 def _sample_synth_class_conditional(
     sx_raw: np.ndarray,
     sy: np.ndarray,
@@ -538,7 +513,7 @@ def _sample_synth_class_conditional(
     n_classes = int(max(np.max(y_real), np.max(sy))) + 1
 
     real_counts = np.bincount(y_real, minlength=n_classes)
-    target_counts = _proportional_allocation(real_counts, n_add)
+    target_counts = proportional_allocation(real_counts, n_add)
     pool_counts = np.bincount(sy, minlength=n_classes)
     missing = [int(c) for c in range(n_classes) if target_counts[c] > 0 and pool_counts[c] <= 0]
 
@@ -821,7 +796,7 @@ def train_generative_model(
     x_train = norm.transform(x_train_real)
     x_val = norm.transform(x_val_real)
 
-    device_t = _resolve_device(gen_cfg)
+    device_t = resolve_device(gen_cfg["train"].get("device", "auto"))
     device = str(device_t)
     model_type = normalize_generator_type(str(gen_cfg["model"].get("type", "cvae")))
 

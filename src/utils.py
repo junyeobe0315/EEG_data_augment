@@ -43,3 +43,27 @@ def append_jsonl(path: str | Path, record: Dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+
+def resolve_device(device: str | torch.device | None = "auto") -> torch.device:
+    if isinstance(device, torch.device):
+        return device
+    dev = str(device or "auto")
+    if dev == "auto":
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.device(dev)
+
+
+def proportional_allocation(counts: np.ndarray, total: int) -> np.ndarray:
+    counts = counts.astype(np.float64)
+    out = np.zeros_like(counts, dtype=np.int64)
+    if total <= 0 or float(counts.sum()) <= 0:
+        return out
+    raw = counts / counts.sum() * float(total)
+    base = np.floor(raw).astype(np.int64)
+    remain = int(total - int(base.sum()))
+    if remain > 0:
+        frac = raw - base
+        order = np.argsort(-frac)
+        base[order[:remain]] += 1
+    return base.astype(np.int64)

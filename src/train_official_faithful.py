@@ -12,7 +12,7 @@ from src.dataio import load_samples_by_ids
 from src.eval import compute_metrics
 from src.models_official_faithful import ATCNetOfficialFaithful, build_faithful_model
 from src.preprocess import ZScoreNormalizer
-from src.utils import append_jsonl, ensure_dir
+from src.utils import append_jsonl, ensure_dir, resolve_device
 
 
 def _evaluate(
@@ -60,10 +60,7 @@ def train_faithful_classifier(
     x_val = norm.transform(x_val)
     x_test = norm.transform(x_test)
 
-    device_name = str(train_cfg.get("device", "auto"))
-    if device_name == "auto":
-        device_name = "cuda" if torch.cuda.is_available() else "cpu"
-    device = torch.device(device_name)
+    device = resolve_device(train_cfg.get("device", "auto"))
 
     model = build_faithful_model(
         model_key=model_key,
