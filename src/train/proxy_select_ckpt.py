@@ -4,29 +4,35 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 
 from src.augment.generate import build_synthetic_with_qc
 from src.qc.qc_pipeline import fit_qc
 from src.train.train_classifier import train_classifier
-from src.train.train_generator import sample_from_generator
+from src.train.train_generator import LoadedGeneratorSampler
 from src.utils.io import ensure_dir, write_json
 from src.utils.seed import stable_hash_seed, set_global_seed
 
 
+def _resolve_device(req: str) -> str:
+    """Resolve device string, supporting 'auto'."""
+    if str(req) == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return str(req)
+
+
 def _sample_by_class(
-    ckpt_path: str | Path,
+    sampler: LoadedGeneratorSampler,
     n_per_class: int,
     num_classes: int,
-    device: str = "cpu",
     ddpm_steps: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sample a fixed number of synthetic trials per class from a checkpoint.
 
     Inputs:
-    - ckpt_path: generator checkpoint path.
+    - sampler: loaded generator sampler.
     - n_per_class: number of samples per class.
     - num_classes: total number of classes.
-    - device: torch device string.
     - ddpm_steps: optional DDPM steps.
 
     Outputs:
@@ -34,10 +40,10 @@ def _sample_by_class(
     - y: ndarray [N] class labels.
 
     Internal logic:
-    - Builds a repeated label vector and calls sample_from_generator.
+    - Builds a repeated label vector and samples from the loaded generator.
     """
     y = np.repeat(np.arange(num_classes, dtype=np.int64), int(n_per_class))
-    x = sample_from_generator(ckpt_path, y, device=device, ddpm_steps=ddpm_steps)
+    x = sampler.sample(y, ddpm_steps=ddpm_steps)
     return x, y
 
 
@@ -87,6 +93,9 @@ def select_best_checkpoint(
     proxy_steps = int(proxy_cfg.get("steps", 120))  # total proxy training steps
     proxy_batch = int(proxy_cfg.get("batch_size", 64))  # proxy batch size
     proxy_lr = float(proxy_cfg.get("lr", 1e-3))  # proxy learning rate
+    ddpm_steps = gen_cfg.get("sample", {}).get("ddpm_steps")
+    sample_device = _resolve_device(str(gen_cfg.get("train", {}).get("device", "auto")))
+    proxy_device = _resolve_device(str(proxy_cfg.get("device", "auto")))
 
     qc_state = None
     if qc_enabled:
@@ -98,24 +107,19 @@ def select_best_checkpoint(
     for ckpt_path in ckpt_paths:
         ckpt_seed = stable_hash_seed(seed, {"ckpt": str(ckpt_path)})
         set_global_seed(ckpt_seed)
+        sampler = LoadedGeneratorSampler(ckpt_path=ckpt_path, device=sample_device)
 
         x_syn, y_syn = _sample_by_class(
-            ckpt_path,
+            sampler,
             n_per_class=sample_n_per_class,
             num_classes=num_classes,
-            device=str(gen_cfg.get("device", "cpu")),
-            ddpm_steps=gen_cfg.get("sample", {}).get("ddpm_steps"),
+            ddpm_steps=ddpm_steps,
         )
 
         if qc_enabled and qc_state is not None:
             target_counts = {int(c): int(sample_n_per_class) for c in range(num_classes)}
             x_syn, y_syn, _ = build_synthetic_with_qc(
-                sample_fn=lambda cls, n: sample_from_generator(
-                    ckpt_path,
-                    np.full((n,), cls, dtype=np.int64),
-                    device=str(gen_cfg.get("device", "cpu")),
-                    ddpm_steps=gen_cfg.get("sample", {}).get("ddpm_steps"),
-                ),
+                sample_fn=lambda cls, n: sampler.sample(np.full((n,), cls, dtype=np.int64), ddpm_steps=ddpm_steps),
                 target_counts=target_counts,
                 qc_state=qc_state,
                 qc_cfg=qc_cfg,
@@ -124,7 +128,7 @@ def select_best_checkpoint(
             )
 
         train_cfg = {
-            "device": proxy_cfg.get("device", "cpu"),
+            "device": proxy_device,
             "batch_size": proxy_batch,
             "lr": proxy_lr,
             "epochs": 1,

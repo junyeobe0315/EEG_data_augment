@@ -27,6 +27,7 @@ checkpoint_selection:
   overgen_buffer: 1.2
   proxy_classifier:
     model: eegnet
+    device: auto
     steps: 120
     batch_size: 64
     lr: 0.001

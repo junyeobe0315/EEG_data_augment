@@ -49,14 +49,14 @@ def _load_all_configs(overrides: list[str]) -> dict:
     return cfg
 
 
-def _load_alpha_star(path: str | Path) -> dict[str, float]:
+def _load_alpha_star(path: str | Path) -> dict[float, float]:
     """Load alpha* values from JSON if present.
 
     Inputs:
     - path: file path to alpha_star.json.
 
     Outputs:
-    - dict mapping r -> alpha_ratio.
+    - dict mapping r(float) -> alpha_ratio(float).
 
     Internal logic:
     - Returns empty dict when file is missing to avoid hard failures.
@@ -65,7 +65,11 @@ def _load_alpha_star(path: str | Path) -> dict[str, float]:
     if not p.exists():
         return {}
     with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+    out: dict[float, float] = {}
+    for k, v in raw.items():
+        out[float(k)] = float(v)
+    return out
 
 
 def _row_key_tuple(row: dict) -> tuple:
@@ -143,10 +147,11 @@ def _run_group(
     r: float,
     cfg: dict,
     stage: str,
-    alpha_star: dict[str, float],
+    alpha_star: dict[float, float],
     compute_distance: bool,
     alpha_search_cfg: dict,
     existing_keys: set[tuple],
+    include_baselines_in_alpha_search: bool,
 ) -> list[dict]:
     """Run all grid rows for a (subject, seed, r) group.
 
@@ -175,6 +180,9 @@ def _run_group(
     screening_classifier = exp_cfg.get("stage", {}).get("screening_classifier", "eegnet")
 
     for method in methods:
+        if stage == "alpha_search" and method != "GenAug" and not include_baselines_in_alpha_search:
+            continue
+
         if stage == "alpha_search":
             cls_list = [screening_classifier]
         else:
@@ -220,7 +228,11 @@ def _run_group(
             if stage == "alpha_search":
                 alpha_candidates = alpha_list
             elif stage == "final_eval":
-                alpha_candidates = [float(alpha_star.get(str(r), alpha_list[-1]))]
+                if r not in alpha_star:
+                    raise KeyError(
+                        f"alpha* missing for r={r}. Run select_alpha.py first and ensure alpha_star.json covers all r."
+                    )
+                alpha_candidates = [float(alpha_star[r])]
             else:
                 alpha_candidates = alpha_list
 
@@ -294,6 +306,9 @@ def main() -> None:
     screening_classifier = exp_cfg.get("stage", {}).get("screening_classifier", "eegnet")  # EEGNet by default
     alpha_star_path = exp_cfg.get("stage", {}).get("alpha_star_path", "./artifacts/alpha_star.json")  # alpha* cache
     alpha_search_cfg = exp_cfg.get("alpha_search", {})  # proxy mode config
+    include_baselines_in_alpha_search = bool(
+        exp_cfg.get("stage", {}).get("alpha_search_include_baselines", False)
+    )
 
     methods = exp_cfg.get("methods", [])  # C0/C1/C2/GenAug
     classifiers = exp_cfg.get("classifiers", [])  # model list
@@ -308,6 +323,14 @@ def main() -> None:
     subjects = cfg["dataset"]["subjects"]
     seeds = cfg["split"]["seeds"]
     r_list = [float(r) for r in cfg["split"]["low_data_fracs"]]
+    if stage == "final_eval":
+        missing_r = [r for r in r_list if r not in alpha_star]
+        if missing_r:
+            missing_txt = ", ".join(str(r) for r in missing_r)
+            raise RuntimeError(
+                f"Missing alpha* for r values: {missing_txt}. "
+                "Run scripts/select_alpha.py to generate a complete alpha_star.json."
+            )
 
     compute_distance = stage != "alpha_search"
 
@@ -331,6 +354,7 @@ def main() -> None:
                 compute_distance=compute_distance,
                 alpha_search_cfg=alpha_search_cfg,
                 existing_keys=existing_keys,
+                include_baselines_in_alpha_search=include_baselines_in_alpha_search,
             )
             for row in rows:
                 appended = append_result(args.results, row)
@@ -357,6 +381,7 @@ def main() -> None:
                 compute_distance,
                 alpha_search_cfg,
                 existing_keys,
+                include_baselines_in_alpha_search,
             ): (subject, seed, r)
             for subject, seed, r in groups
         }

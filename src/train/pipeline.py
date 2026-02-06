@@ -22,7 +22,7 @@ from src.eval.metrics import compute_metrics
 from src.eval.embedding import FrozenEEGNetEmbedder, train_embedding_eegnet
 from src.qc.qc_pipeline import fit_qc
 from src.train.train_classifier import train_classifier
-from src.train.train_generator import train_generator, sample_from_generator
+from src.train.train_generator import train_generator, LoadedGeneratorSampler
 from src.train.proxy_select_ckpt import select_best_checkpoint
 from src.utils.alpha import alpha_ratio_to_mix
 from src.utils.config import config_hash, save_yaml
@@ -136,6 +136,53 @@ def _list_ckpts(gen_run_dir: Path) -> list[str]:
     """
     ckpts = sorted(gen_run_dir.glob("ckpt_epoch_*.pt"))
     return [str(p) for p in ckpts]
+
+
+def _torch_linear_probe_predict(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_val: np.ndarray,
+    num_classes: int,
+    cfg: dict,
+    device: str,
+) -> np.ndarray:
+    """Train a lightweight linear probe on embeddings and predict validation labels."""
+    max_iter = int(cfg.get("max_iter", 200))
+    lr = float(cfg.get("lr", 1e-2))
+    weight_decay = float(cfg.get("weight_decay", 0.0))
+    batch_size = int(cfg.get("batch_size", 512))
+
+    x_train_t = torch.from_numpy(x_train.astype(np.float32))
+    y_train_t = torch.from_numpy(y_train.astype(np.int64))
+    x_val_t = torch.from_numpy(x_val.astype(np.float32))
+
+    model = torch.nn.Linear(int(x_train.shape[1]), int(num_classes)).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    n = int(x_train_t.shape[0])
+    if n <= 0:
+        return np.zeros((0,), dtype=np.int64)
+
+    model.train()
+    for _ in range(max_iter):
+        if batch_size >= n:
+            xb = x_train_t.to(device)
+            yb = y_train_t.to(device)
+        else:
+            idx = torch.randint(0, n, (batch_size,))
+            xb = x_train_t[idx].to(device)
+            yb = y_train_t[idx].to(device)
+        logits = model(xb)
+        loss = loss_fn(logits, yb)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+
+    model.eval()
+    with torch.no_grad():
+        pred = torch.argmax(model(x_val_t.to(device)), dim=1)
+    return pred.detach().cpu().numpy().astype(np.int64)
 
 
 def run_experiment(
@@ -310,6 +357,8 @@ def run_experiment(
             sample_cfg = gen_cfg.get("sample", {})
             buffer = float(sample_cfg.get("dynamic_buffer", 1.2))  # oversample buffer
             ddpm_steps = sample_cfg.get("ddpm_steps")  # optional DDPM steps
+            sample_device = _resolve_device(gen_cfg.get("train", {}))
+            sampler = LoadedGeneratorSampler(best_ckpt, device=sample_device)
 
             def _sample_fn(cls: int, n: int) -> np.ndarray:
                 """Sample n synthetic trials for a given class.
@@ -325,12 +374,7 @@ def run_experiment(
                 - Builds a label vector and calls the generator sampler.
                 """
                 y = np.full((n,), int(cls), dtype=np.int64)
-                return sample_from_generator(
-                    best_ckpt,
-                    y,
-                    device=_resolve_device(gen_cfg.get("train", {})),
-                    ddpm_steps=ddpm_steps,
-                )
+                return sampler.sample(y, ddpm_steps=ddpm_steps)
 
             pool_cfg = gen_cfg.get("pool", {})
             pool_enabled = bool(pool_cfg.get("enabled", False))  # enable pooled sampling
@@ -526,25 +570,38 @@ def run_experiment(
             x_emb = train_emb
             y_emb = y_train
 
-        from sklearn.linear_model import LogisticRegression
-
         lp_cfg = alpha_search_cfg.get("linear_probe", {})
-        lr_kwargs = {
-            "max_iter": int(lp_cfg.get("max_iter", 200)),
-            "C": float(lp_cfg.get("C", 1.0)),
-            "solver": str(lp_cfg.get("solver", "lbfgs")),
-        }
-        if "n_jobs" in lp_cfg:
-            lr_kwargs["n_jobs"] = int(lp_cfg.get("n_jobs", 1))
-        clf = LogisticRegression(**lr_kwargs)
-        clf.fit(x_emb, y_emb)
-        pred = clf.predict(val_emb)
+        lp_backend = str(lp_cfg.get("backend", "torch")).lower()
+        if lp_backend == "sklearn":
+            from sklearn.linear_model import LogisticRegression
+
+            lr_kwargs = {
+                "max_iter": int(lp_cfg.get("max_iter", 200)),
+                "C": float(lp_cfg.get("C", 1.0)),
+                "solver": str(lp_cfg.get("solver", "lbfgs")),
+            }
+            if "n_jobs" in lp_cfg:
+                lr_kwargs["n_jobs"] = int(lp_cfg.get("n_jobs", 1))
+            clf = LogisticRegression(**lr_kwargs)
+            clf.fit(x_emb, y_emb)
+            pred = clf.predict(val_emb)
+        else:
+            pred = _torch_linear_probe_predict(
+                x_train=x_emb,
+                y_train=y_emb,
+                x_val=val_emb,
+                num_classes=num_classes,
+                cfg=lp_cfg,
+                device=_resolve_device(model_cfgs["eegnet"]["train"]),
+            )
         val_metrics = compute_metrics(y_val, pred)
         metrics = {
             "val_acc": val_metrics["acc"],
+            "val_bal_acc": val_metrics["bal_acc"],
             "val_kappa": val_metrics["kappa"],
             "val_macro_f1": val_metrics["macro_f1"],
             "acc": np.nan,
+            "bal_acc": np.nan,
             "kappa": np.nan,
             "macro_f1": np.nan,
             "ratio_effective": ratio_effective,
@@ -574,6 +631,18 @@ def run_experiment(
         )
 
     runtime_sec = float(time.time() - start_time)
+    run_device = _resolve_device(train_cfg)
+    if run_device.startswith("cuda") and torch.cuda.is_available():
+        gpu_idx = torch.device(run_device).index
+        if gpu_idx is None:
+            gpu_idx = torch.cuda.current_device()
+        gpu_name = torch.cuda.get_device_name(gpu_idx)
+        gpu_mem_mb = float(torch.cuda.max_memory_allocated(gpu_idx) / (1024.0 ** 2))
+    else:
+        gpu_name = np.nan
+        gpu_mem_mb = np.nan
+
+    distance_value = distance_rows.get("dist_mmd", distance_rows.get("dist_swd", np.nan))
     row = {
         "run_id": run_id,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -596,17 +665,22 @@ def run_experiment(
         "alpha_ratio": float(alpha_ratio),
         "qc_on": bool(qc_on),
         "acc": metrics.get("acc", np.nan),
+        "bal_acc": metrics.get("bal_acc", np.nan),
         "kappa": metrics.get("kappa", np.nan),
         "macro_f1": metrics.get("macro_f1", np.nan),
         "val_acc": metrics.get("val_acc", np.nan),
+        "val_bal_acc": metrics.get("val_bal_acc", np.nan),
         "val_kappa": metrics.get("val_kappa", np.nan),
         "val_macro_f1": metrics.get("val_macro_f1", np.nan),
         "pass_rate": qc_report.get("pass_rate", np.nan),
         "oversample_factor": qc_report.get("oversample_factor", np.nan),
+        "distance": distance_value,
         "ratio_effective": ratio_effective,
         "alpha_mix_effective": alpha_mix_effective,
         "runtime_sec": runtime_sec,
-        "device": _resolve_device(train_cfg),
+        "device": run_device,
+        "gpu_name": gpu_name,
+        "gpu_mem_mb": gpu_mem_mb,
     }
     row.update(distance_rows)
 

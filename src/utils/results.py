@@ -37,14 +37,17 @@ RESULT_COLUMNS = [
     "qc_on",
     # Metrics
     "acc",
+    "bal_acc",
     "kappa",
     "macro_f1",
     "val_acc",
+    "val_bal_acc",
     "val_kappa",
     "val_macro_f1",
     # Diagnostics
     "pass_rate",
     "oversample_factor",
+    "distance",
     "dist_mmd",
     "dist_swd",
     "dist_mmd_class_0",
@@ -59,6 +62,8 @@ RESULT_COLUMNS = [
     "alpha_mix_effective",
     "runtime_sec",
     "device",
+    "gpu_name",
+    "gpu_mem_mb",
 ]
 
 
@@ -157,29 +162,21 @@ def append_result(path: str | Path, row: dict[str, Any]) -> bool:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
 
+    columns = RESULT_COLUMNS.copy()
     if p.exists():
         df = pd.read_csv(p)
+        for col in columns:
+            if col not in df.columns:
+                df[col] = np.nan
+        df = df[columns]
         if has_primary_key(df, row):
             return False
-
-        columns = list(df.columns)
-        for k in row.keys():
-            if k not in columns:
-                columns.append(k)
-                df[k] = np.nan
-        if not columns:
-            columns = RESULT_COLUMNS
 
         normalized = _normalize_row(row, columns)
         df = pd.concat([df, pd.DataFrame([normalized])], ignore_index=True)
         df = df[columns]
         df.to_csv(p, index=False)
         return True
-
-    columns = RESULT_COLUMNS.copy()
-    for k in row.keys():
-        if k not in columns:
-            columns.append(k)
 
     normalized = _normalize_row(row, columns)
     with open(p, "w", newline="", encoding="utf-8") as f:

@@ -8,11 +8,16 @@ stage:
   mode: full  # alpha_search | final_eval | full
   screening_classifier: eegnet
   alpha_star_path: ./artifacts/alpha_star.json
+  alpha_search_include_baselines: false
 
 alpha_search:
   proxy_mode: linear_probe  # full | steps | linear_probe
   embed_steps: 400
   linear_probe:
+    backend: torch  # torch | sklearn
     max_iter: 200
+    lr: 0.01
+    weight_decay: 0.0
+    batch_size: 512
     C: 1.0
     solver: lbfgs

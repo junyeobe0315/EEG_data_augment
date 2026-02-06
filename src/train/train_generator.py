@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Any
 
@@ -308,6 +309,45 @@ def train_generator(
     }
 
 
+@dataclass
+class LoadedGeneratorSampler:
+    """Reusable checkpoint-backed sampler to avoid repeated model reloads."""
+
+    ckpt_path: str | Path
+    device: str = "cpu"
+
+    def __post_init__(self) -> None:
+        """Load checkpoint and build generator once for repeated sampling."""
+        try:
+            ckpt = torch.load(Path(self.ckpt_path), map_location=self.device, weights_only=False)
+        except TypeError:
+            ckpt = torch.load(Path(self.ckpt_path), map_location=self.device)
+
+        self.model_type = normalize_generator_type(str(ckpt.get("model_type", "cwgan_gp")))
+        shape = ckpt.get("shape", {})
+        in_channels = int(shape.get("c"))
+        time_steps = int(shape.get("t"))
+        num_classes = int(shape.get("n_classes"))
+        model_cfg = ckpt.get("model_cfg", {})
+
+        self.gen = build_generator(self.model_type, in_channels, time_steps, num_classes, model_cfg).to(self.device)
+        self.gen.load_state_dict(ckpt["gen_state"])
+        self.gen.eval()
+
+    @torch.no_grad()
+    def sample(self, y: np.ndarray, ddpm_steps: int | None = None) -> np.ndarray:
+        """Sample synthetic trials for a label vector using the loaded model."""
+        y_t = torch.from_numpy(y.astype(np.int64)).to(self.device)
+        if self.model_type == "cwgan_gp":
+            z = torch.randn(y_t.size(0), self.gen.latent_dim, device=self.device)
+            out = self.gen(z, y_t)
+        elif self.model_type == "ddpm":
+            out = self.gen.sample(y_t, num_steps=ddpm_steps)
+        else:
+            raise ValueError(f"Unsupported generator type: {self.model_type}")
+        return out.detach().cpu().numpy().astype(np.float32)
+
+
 @torch.no_grad()
 def sample_from_generator(
     ckpt_path: str | Path,
@@ -327,31 +367,7 @@ def sample_from_generator(
     - ndarray [N, C, T] synthetic samples.
 
     Internal logic:
-    - Rebuilds generator from checkpoint, runs conditional sampling, returns numpy.
+    - Uses a reusable sampler abstraction (single-use wrapper for compatibility).
     """
-    try:
-        ckpt = torch.load(Path(ckpt_path), map_location=device, weights_only=False)
-    except TypeError:
-        ckpt = torch.load(Path(ckpt_path), map_location=device)
-    model_type = normalize_generator_type(str(ckpt.get("model_type", "cwgan_gp")))
-    shape = ckpt.get("shape", {})
-    in_channels = int(shape.get("c"))
-    time_steps = int(shape.get("t"))
-    num_classes = int(shape.get("n_classes"))
-    model_cfg = ckpt.get("model_cfg", {})
-
-    gen = build_generator(model_type, in_channels, time_steps, num_classes, model_cfg).to(device)
-    gen.load_state_dict(ckpt["gen_state"])
-    gen.eval()
-
-    y_t = torch.from_numpy(y.astype(np.int64)).to(device)
-    if model_type == "cwgan_gp":
-        z = torch.randn(y_t.size(0), gen.latent_dim, device=device)
-        out = gen(z, y_t)
-    elif model_type == "ddpm":
-        steps = ddpm_steps
-        out = gen.sample(y_t, num_steps=steps)
-    else:
-        raise ValueError(f"Unsupported generator type: {model_type}")
-
-    return out.detach().cpu().numpy().astype(np.float32)
+    sampler = LoadedGeneratorSampler(ckpt_path=ckpt_path, device=device)
+    return sampler.sample(y, ddpm_steps=ddpm_steps)

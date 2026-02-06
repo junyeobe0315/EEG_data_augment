@@ -170,6 +170,8 @@ def train_classifier(
 
     ratio_effective = float(n_syn / max(1, n_real))  # actual synth:real ratio
     alpha_mix_effective = alpha_ratio_to_mix(ratio_effective)  # mixture weight
+    mixup_alpha = float(train_cfg.get("mixup_alpha", 0.2))  # Beta alpha for mixup
+    aug_cfg = aug_cfg or {}
 
     if is_sklearn_model(model_type):
         model = build_classifier(model_type, x_train.shape[1], x_train.shape[2], num_classes, model_cfg)
@@ -189,9 +191,11 @@ def train_classifier(
         test_metrics = compute_metrics(y_test, model.predict(x_test)) if evaluate_test else {}
         metrics = {
             "val_acc": val_metrics["acc"],
+            "val_bal_acc": val_metrics["bal_acc"],
             "val_kappa": val_metrics["kappa"],
             "val_macro_f1": val_metrics["macro_f1"],
             "acc": test_metrics.get("acc", np.nan),
+            "bal_acc": test_metrics.get("bal_acc", np.nan),
             "kappa": test_metrics.get("kappa", np.nan),
             "macro_f1": test_metrics.get("macro_f1", np.nan),
             "ratio_effective": ratio_effective,
@@ -244,9 +248,6 @@ def train_classifier(
     steps_per_eval = int(step_cfg.get("steps_per_eval", 100))  # eval cadence
 
     loss_fn = nn.CrossEntropyLoss()
-
-    mixup_alpha = float(train_cfg.get("mixup_alpha", 0.2))  # Beta alpha for mixup
-    aug_cfg = aug_cfg or {}
 
     def _eval_and_update() -> None:
         """Evaluate on validation data and update best checkpoint state.
@@ -373,9 +374,11 @@ def train_classifier(
 
     metrics = {
         "val_acc": val_metrics["acc"],
+        "val_bal_acc": val_metrics["bal_acc"],
         "val_kappa": val_metrics["kappa"],
         "val_macro_f1": val_metrics["macro_f1"],
         "acc": test_metrics.get("acc", np.nan),
+        "bal_acc": test_metrics.get("bal_acc", np.nan),
         "kappa": test_metrics.get("kappa", np.nan),
         "macro_f1": test_metrics.get("macro_f1", np.nan),
         "ratio_effective": ratio_effective,
