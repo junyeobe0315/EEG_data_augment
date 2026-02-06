@@ -11,8 +11,6 @@ Key goals:
 - Validate the bias–variance (approximation–estimation) trade-off in practice.
 - Link performance gains to class-conditional distribution mismatch in an embedding space.
 
-Legacy code is preserved in `legacy/`.
-
 ### Quick Start
 
 1. Cache preprocessed data and build index:
@@ -61,7 +59,6 @@ src/                   # Core modules
 tests/                 # Leakage/shape/schema tests
 artifacts/             # Splits, runs, checkpoints, figures
 results/               # results.csv and summaries
-legacy/                # Previous codebase
 ```
 
 ### Reproducibility Rules (Enforced)
@@ -84,8 +81,6 @@ legacy/                # Previous codebase
 - 저데이터 환경에서 GenAug 성능 향상을 검증합니다.
 - 편향–분산(근사–추정) 트레이드오프를 실험적으로 확인합니다.
 - 임베딩 공간에서의 클래스 조건부 분포 불일치와 성능 향상을 연결합니다.
-
-레거시 코드는 `legacy/`에 보존되어 있습니다.
 
 ### 빠른 시작
 
@@ -135,7 +130,6 @@ src/                   # 핵심 모듈
 tests/                 # 누수/형상/스키마 테스트
 artifacts/             # 스플릿, 런, 체크포인트, 그림
 results/               # results.csv 및 요약
-legacy/                # 기존 코드베이스
 ```
 
 ### 재현성 규칙(강제)

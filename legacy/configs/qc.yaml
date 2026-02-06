@@ -1,8 +1,0 @@
-psd:
-  enabled: true
-  band: [8.0, 30.0]
-  z_threshold: 2.5
-covariance:
-  enabled: true
-  dist_threshold_quantile: 0.95
-target_keep_ratio: 0.5

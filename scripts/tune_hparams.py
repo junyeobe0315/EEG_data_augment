@@ -20,6 +20,7 @@ from src.train.pipeline import run_experiment
 from src.utils.config import load_yaml, config_hash
 from src.utils.config_pack import load_yaml_with_pack
 from src.utils.io import ensure_dir, write_json
+from src.utils.logging import get_logger
 from src.utils.resource import get_git_commit
 from src.utils.seed import set_global_seed, stable_hash_seed
 from src.utils.tuning_results import append_tuning_trial
@@ -368,6 +369,28 @@ def _validate_inputs(cfg: dict, tuning_cfg: dict) -> None:
         raise ValueError("tuning.pilot.subjects must be non-empty")
 
 
+def _log_trial(logger, rec: dict) -> None:
+    """Print a concise trial record summary."""
+    obj = rec.get("objective_value", np.nan)
+    tie = rec.get("tie_break_value", np.nan)
+    obj_txt = f"{float(obj):.4f}" if np.isfinite(obj) else "nan"
+    tie_txt = f"{float(tie):.4f}" if np.isfinite(tie) else "nan"
+    logger.info(
+        "[trial] %s %s id=%s status=%s obj=%s tie=%s n_eval=%s runtime=%.1fs",
+        rec.get("target"),
+        rec.get("phase"),
+        rec.get("trial_id"),
+        rec.get("status"),
+        obj_txt,
+        tie_txt,
+        rec.get("n_eval"),
+        float(rec.get("runtime_sec", 0.0)),
+    )
+    reason = str(rec.get("reason", "")).strip()
+    if reason:
+        logger.warning("[trial] id=%s reason=%s", rec.get("trial_id"), reason)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tune EEGNet and cWGAN/QC hyperparameters with random search")
     parser.add_argument("--config_pack", type=str, default="base")
@@ -376,6 +399,7 @@ def main() -> None:
     parser.add_argument("--max_trials", type=int, default=None)
     parser.add_argument("--override", action="append", default=[])
     args = parser.parse_args()
+    logger = get_logger("tune_hparams")
 
     cfg = _load_all_configs(args.override, config_pack=args.config_pack)
     tuning_cfg = load_yaml(args.tuning_cfg, overrides=args.override)
@@ -409,6 +433,25 @@ def main() -> None:
 
     screen_combos = _build_combos(pilot_subjects, screen_seeds, screen_r)
     full_combos = _build_combos(pilot_subjects, pilot_seeds, pilot_r)
+    logger.info(
+        "tuning start base_pack=%s metric=%s seed=%d eeg_trials=%d gen_trials=%d top_k=%d",
+        args.config_pack,
+        metric,
+        base_seed,
+        eegnet_trials,
+        gen_trials,
+        top_k,
+    )
+    logger.info(
+        "pilot subjects=%s seeds=%s r=%s | screen seeds=%s r=%s | alpha_ref=%.3f",
+        pilot_subjects,
+        pilot_seeds,
+        pilot_r,
+        screen_seeds,
+        screen_r,
+        alpha_ratio_ref,
+    )
+    logger.info("artifacts tuning_root=%s trials_csv=%s", tuning_root, trials_csv)
 
     # 1) EEGNet tuning
     eeg_space = space_cfg.get("eegnet", {})
@@ -434,9 +477,11 @@ def main() -> None:
         write_json(tuning_root / "eegnet" / "trials" / f"{trial_id}.json", {"record": rec, "params": params})
         eeg_rows_screen.append(rec)
         eeg_trial_payload[trial_id] = {"params": params, "cfg": tuned_eegnet_cfg}
+        _log_trial(logger, rec)
 
     eeg_rows_screen_ok = [r for r in eeg_rows_screen if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))]
     eeg_top_ids = [r["trial_id"] for r in _sort_trials(eeg_rows_screen_ok)[:top_k]]
+    logger.info("eegnet screen done valid=%d/%d top_ids=%s", len(eeg_rows_screen_ok), len(eeg_rows_screen), eeg_top_ids)
 
     eeg_rows_confirm: list[dict] = []
     for tid in eeg_top_ids:
@@ -457,6 +502,7 @@ def main() -> None:
         write_json(tuning_root / "eegnet" / "trials" / f"{tid}_confirm.json", {"record": rec, "params": params})
         eeg_rows_confirm.append(rec)
         eeg_trial_payload[f"{tid}_confirm"] = {"params": params, "cfg": tuned_eegnet_cfg}
+        _log_trial(logger, rec)
 
     eeg_candidates = [r for r in eeg_rows_confirm if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))]
     if not eeg_candidates:
@@ -466,6 +512,13 @@ def main() -> None:
     eeg_best_row = _sort_trials(eeg_candidates)[0]
     eeg_best_params = json.loads(eeg_best_row["params_json"])
     eeg_best_cfg = apply_dotted_params(cfg["models"]["eegnet"], eeg_best_params)
+    logger.info(
+        "eegnet best trial=%s phase=%s obj=%.4f tie=%.4f",
+        eeg_best_row.get("trial_id"),
+        eeg_best_row.get("phase"),
+        float(eeg_best_row.get("objective_value", np.nan)),
+        float(eeg_best_row.get("tie_break_value", np.nan)),
+    )
 
     # 2) GenAug+QC tuning
     gen_space = space_cfg.get("cwgan_gp", {})
@@ -480,6 +533,7 @@ def main() -> None:
         config_pack=args.config_pack,
         cache_name="c0_screen",
     )
+    logger.info("genaug screen baseline cache built combos=%d", len(c0_cache_screen))
 
     gen_rows_screen: list[dict] = []
     gen_trial_payload: dict[str, dict] = {}
@@ -516,9 +570,11 @@ def main() -> None:
             "gen_cfg": tuned_gen_cfg,
             "qc_cfg": tuned_qc_cfg,
         }
+        _log_trial(logger, rec)
 
     gen_rows_screen_ok = [r for r in gen_rows_screen if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))]
     gen_top_ids = [r["trial_id"] for r in _sort_trials(gen_rows_screen_ok)[:top_k]]
+    logger.info("genaug screen done valid=%d/%d top_ids=%s", len(gen_rows_screen_ok), len(gen_rows_screen), gen_top_ids)
 
     c0_cache_full = _build_c0_cache(
         combos=full_combos,
@@ -529,6 +585,7 @@ def main() -> None:
         config_pack=args.config_pack,
         cache_name="c0_full",
     )
+    logger.info("genaug confirm baseline cache built combos=%d", len(c0_cache_full))
 
     gen_rows_confirm: list[dict] = []
     for tid in gen_top_ids:
@@ -561,6 +618,7 @@ def main() -> None:
             "gen_cfg": tuned_gen_cfg,
             "qc_cfg": tuned_qc_cfg,
         }
+        _log_trial(logger, rec)
 
     gen_candidates = [r for r in gen_rows_confirm if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))]
     if not gen_candidates:
@@ -569,6 +627,13 @@ def main() -> None:
         raise RuntimeError("No valid GenAug/QC tuning trials.")
     gen_best_row = _sort_trials(gen_candidates)[0]
     gen_best_payload = json.loads(gen_best_row["params_json"])
+    logger.info(
+        "genaug/qc best trial=%s phase=%s obj=%.4f tie=%.4f",
+        gen_best_row.get("trial_id"),
+        gen_best_row.get("phase"),
+        float(gen_best_row.get("objective_value", np.nan)),
+        float(gen_best_row.get("tie_break_value", np.nan)),
+    )
 
     summary = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -608,8 +673,7 @@ def main() -> None:
         },
     }
     write_json(best_json, summary)
-    print(f"[tuning] saved best params: {best_json}")
-    print(f"[tuning] trials table: {trials_csv}")
+    logger.info("tuning end best_params=%s trials_table=%s", best_json, trials_csv)
 
 
 if __name__ == "__main__":

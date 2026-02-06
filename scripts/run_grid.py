@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,6 +16,7 @@ if str(ROOT) not in sys.path:
 from src.train.pipeline import run_experiment
 from src.utils.config import load_yaml
 from src.utils.config_pack import load_yaml_with_pack
+from src.utils.logging import get_logger
 from src.utils.results import append_result, has_primary_key, load_results, PRIMARY_KEY_FIELDS
 
 
@@ -140,6 +142,39 @@ def _log_progress(
         f"last=(S{subject:02d}, seed={seed}, r={r}) | "
         f"elapsed={elapsed:.0f}s | {rate:.2f} rows/s",
         flush=True,
+    )
+
+
+def _safe_float(v: Any) -> float | None:
+    """Best-effort float cast used by row logging helpers."""
+    if v in (None, ""):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_metric_for_log(row: dict) -> tuple[str, float | None]:
+    """Pick the most relevant metric field for concise row logs."""
+    for key in ("kappa", "val_kappa", "macro_f1", "val_macro_f1", "acc", "val_acc"):
+        value = _safe_float(row.get(key))
+        if value is not None:
+            return key, value
+    return "metric", None
+
+
+def _format_row_log(row: dict, appended: bool) -> str:
+    """Build a compact one-line row log."""
+    metric_name, metric_value = _row_metric_for_log(row)
+    metric_txt = f"{metric_name}={metric_value:.4f}" if metric_value is not None else f"{metric_name}=NA"
+    runtime = _safe_float(row.get("runtime_sec"))
+    runtime_txt = f"runtime={runtime:.1f}s" if runtime is not None else "runtime=NA"
+    state = "append" if appended else "skip"
+    return (
+        f"[row:{state}] S{int(row.get('subject')):02d} seed={row.get('seed')} r={row.get('r')} "
+        f"{row.get('method')}/{row.get('classifier')} gen={row.get('generator')} "
+        f"alpha={row.get('alpha_ratio')} qc={row.get('qc_on')} {metric_txt} {runtime_txt}"
     )
 
 
@@ -306,7 +341,9 @@ def main() -> None:
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--n_jobs", type=int, default=1)
     parser.add_argument("--log_every_groups", type=int, default=5)
+    parser.add_argument("--quiet_rows", action="store_true")
     args = parser.parse_args()
+    logger = get_logger("run_grid")
 
     cfg = _load_all_configs(args.override, config_pack=args.config_pack)
     exp_cfg = cfg["experiment"]  # grid + stage settings
@@ -323,6 +360,20 @@ def main() -> None:
     generators = exp_cfg.get("generators", [])  # generator list
     alpha_list = [float(x) for x in exp_cfg.get("alpha_ratio_list", [0.0])]  # synth ratios
     qc_on_list = [bool(x) for x in exp_cfg.get("qc_on", [False])]  # QC ablation flags
+    log_rows = not bool(args.quiet_rows)
+
+    logger.info(
+        "grid start stage=%s config_pack=%s n_jobs=%d results=%s methods=%s classifiers=%s generators=%s alpha=%s qc=%s",
+        stage,
+        args.config_pack,
+        int(args.n_jobs),
+        args.results,
+        methods,
+        classifiers,
+        generators,
+        alpha_list,
+        qc_on_list,
+    )
 
     results_df = load_results(args.results)
     existing_keys = _existing_key_set(results_df)
@@ -352,6 +403,7 @@ def main() -> None:
 
     if int(args.n_jobs) <= 1:
         for subject, seed, r in groups:
+            logger.info("group start S%02d seed=%d r=%s", subject, seed, r)
             rows = _run_group(
                 subject=subject,
                 seed=seed,
@@ -371,9 +423,13 @@ def main() -> None:
                     existing_keys.add(_row_key_tuple(row))
                     rows_appended += 1
                 rows_attempted += 1
+                if log_rows:
+                    logger.info("%s", _format_row_log(row, appended=bool(appended)))
             groups_done += 1
             if groups_done % log_every == 0 or groups_done == groups_total:
                 _log_progress(groups_done, groups_total, rows_appended, rows_attempted, (subject, seed, r), start_time)
+            if not rows:
+                logger.info("group skip S%02d seed=%d r=%s (all rows already present)", subject, seed, r)
         return
 
     ctx = mp.get_context("spawn")
@@ -398,15 +454,26 @@ def main() -> None:
         for fut in as_completed(futures):
             subject, seed, r = futures[fut]
             rows = fut.result()
+            logger.info("group done S%02d seed=%d r=%s produced_rows=%d", subject, seed, r, len(rows))
             for row in rows:
                 appended = append_result(args.results, row)
                 if appended:
                     existing_keys.add(_row_key_tuple(row))
                     rows_appended += 1
                 rows_attempted += 1
+                if log_rows:
+                    logger.info("%s", _format_row_log(row, appended=bool(appended)))
             groups_done += 1
             if groups_done % log_every == 0 or groups_done == groups_total:
                 _log_progress(groups_done, groups_total, rows_appended, rows_attempted, (subject, seed, r), start_time)
+    logger.info(
+        "grid end stage=%s groups=%d appended=%d attempted=%d elapsed=%.1fs",
+        stage,
+        groups_done,
+        rows_appended,
+        rows_attempted,
+        time.time() - start_time,
+    )
 
 
 if __name__ == "__main__":
