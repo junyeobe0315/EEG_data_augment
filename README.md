@@ -45,6 +45,8 @@ python scripts/tune_hparams.py --config_pack base
 python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
 # GAN->VAE 순차 튜닝
 python scripts/tune_hparams.py --config_pack base --gen_sequence cwgan_gp cvae
+# 병렬 trial 실행 (리소스 허용 시)
+python scripts/tune_hparams.py --config_pack base --gen_sequence cwgan_gp cvae --n_jobs 2
 ```
 Notes:
 - Generator tuning epoch policy is in `configs/tuning.yaml` (`generator_epoch_policy`).

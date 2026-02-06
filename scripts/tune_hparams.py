@@ -4,8 +4,10 @@ import argparse
 import copy
 import json
 import math
+import multiprocessing as mp
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -458,6 +460,31 @@ def _resolve_generator_targets(args, tuning_cfg: dict, cfg: dict) -> list[str]:
     return targets
 
 
+def _run_trial_jobs(
+    eval_fn,
+    jobs: list[dict[str, Any]],
+    n_jobs: int,
+) -> list[tuple[dict[str, Any], Any]]:
+    """Run trial evaluation jobs either sequentially or in parallel.
+
+    Outputs:
+    - list of tuples: (job_dict, eval_fn_output)
+    """
+    if int(n_jobs) <= 1:
+        out: list[tuple[dict[str, Any], Any]] = []
+        for job in jobs:
+            out.append((job, eval_fn(**job)))
+        return out
+
+    ctx = mp.get_context("spawn")
+    out: list[tuple[dict[str, Any], Any]] = []
+    with ProcessPoolExecutor(max_workers=int(n_jobs), mp_context=ctx) as ex:
+        fut_to_job = {ex.submit(eval_fn, **job): job for job in jobs}
+        for fut in as_completed(fut_to_job):
+            out.append((fut_to_job[fut], fut.result()))
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tune EEGNet and cWGAN/QC hyperparameters with random search")
     parser.add_argument("--config_pack", type=str, default="base")
@@ -465,6 +492,7 @@ def main() -> None:
     parser.add_argument("--space_cfg", type=str, default="configs/hparam_space.yaml")
     parser.add_argument("--gen_sequence", type=str, nargs="+", choices=["cwgan_gp", "cvae", "ddpm"], default=None)
     parser.add_argument("--max_trials", type=int, default=None)
+    parser.add_argument("--n_jobs", type=int, default=1)
     parser.add_argument("--override", action="append", default=[])
     args = parser.parse_args()
     logger = get_logger("tune_hparams")
@@ -504,13 +532,14 @@ def main() -> None:
     screen_combos = _build_combos(pilot_subjects, screen_seeds, screen_r)
     full_combos = _build_combos(pilot_subjects, pilot_seeds, pilot_r)
     logger.info(
-        "tuning start base_pack=%s metric=%s seed=%d eeg_trials=%d gen_trials=%d top_k=%d",
+        "tuning start base_pack=%s metric=%s seed=%d eeg_trials=%d gen_trials=%d top_k=%d n_jobs=%d",
         args.config_pack,
         metric,
         base_seed,
         eegnet_trials,
         gen_trials,
         top_k,
+        int(args.n_jobs),
     )
     logger.info(
         "pilot subjects=%s seeds=%s r=%s | screen seeds=%s r=%s | alpha_ref=%.3f gen_sequence=%s",
@@ -528,22 +557,29 @@ def main() -> None:
     eeg_space = space_cfg.get("eegnet", {})
     eeg_rows_screen: list[dict] = []
     eeg_trial_payload: dict[str, dict] = {}
+    eeg_screen_jobs: list[dict[str, Any]] = []
     for t in range(eegnet_trials):
         trial_id = f"eegnet_screen_{t:03d}"
         trial_seed = stable_hash_seed(base_seed, {"target": "eegnet", "trial": t, "phase": "screen"})
         rng = np.random.default_rng(trial_seed)
         params = sample_from_space(eeg_space, rng)
-        rec, tuned_eegnet_cfg = _eval_eegnet_trial(
-            trial_id=trial_id,
-            trial_seed=trial_seed,
-            phase="screen",
-            combos=screen_combos,
-            metric=metric,
-            base_cfg=cfg,
-            eegnet_params=params,
-            run_root=tuning_root / "eegnet",
-            config_pack=args.config_pack,
+        eeg_screen_jobs.append(
+            {
+                "trial_id": trial_id,
+                "trial_seed": trial_seed,
+                "phase": "screen",
+                "combos": screen_combos,
+                "metric": metric,
+                "base_cfg": cfg,
+                "eegnet_params": params,
+                "run_root": tuning_root / "eegnet",
+                "config_pack": args.config_pack,
+            }
         )
+
+    for job, (rec, tuned_eegnet_cfg) in _run_trial_jobs(_eval_eegnet_trial, eeg_screen_jobs, int(args.n_jobs)):
+        params = job["eegnet_params"]
+        trial_id = str(job["trial_id"])
         append_tuning_trial(trials_csv, rec)
         write_json(tuning_root / "eegnet" / "trials" / f"{trial_id}.json", {"record": rec, "params": params})
         eeg_rows_screen.append(rec)
@@ -555,24 +591,33 @@ def main() -> None:
     logger.info("eegnet screen done valid=%d/%d top_ids=%s", len(eeg_rows_screen_ok), len(eeg_rows_screen), eeg_top_ids)
 
     eeg_rows_confirm: list[dict] = []
+    eeg_confirm_jobs: list[dict[str, Any]] = []
     for tid in eeg_top_ids:
         params = eeg_trial_payload[tid]["params"]
         trial_seed = stable_hash_seed(base_seed, {"target": "eegnet", "trial_id": tid, "phase": "confirm"})
-        rec, tuned_eegnet_cfg = _eval_eegnet_trial(
-            trial_id=f"{tid}_confirm",
-            trial_seed=trial_seed,
-            phase="confirm",
-            combos=full_combos,
-            metric=metric,
-            base_cfg=cfg,
-            eegnet_params=params,
-            run_root=tuning_root / "eegnet",
-            config_pack=args.config_pack,
+        eeg_confirm_jobs.append(
+            {
+                "trial_id": f"{tid}_confirm",
+                "trial_seed": trial_seed,
+                "phase": "confirm",
+                "combos": full_combos,
+                "metric": metric,
+                "base_cfg": cfg,
+                "eegnet_params": params,
+                "run_root": tuning_root / "eegnet",
+                "config_pack": args.config_pack,
+            }
         )
+
+    for job, (rec, tuned_eegnet_cfg) in _run_trial_jobs(_eval_eegnet_trial, eeg_confirm_jobs, int(args.n_jobs)):
+        trial_id = str(job["trial_id"])
+        # confirmation trials reuse the source screen params
+        src_id = trial_id.replace("_confirm", "")
+        params = eeg_trial_payload[src_id]["params"]
         append_tuning_trial(trials_csv, rec)
-        write_json(tuning_root / "eegnet" / "trials" / f"{tid}_confirm.json", {"record": rec, "params": params})
+        write_json(tuning_root / "eegnet" / "trials" / f"{trial_id}.json", {"record": rec, "params": params})
         eeg_rows_confirm.append(rec)
-        eeg_trial_payload[f"{tid}_confirm"] = {"params": params, "cfg": tuned_eegnet_cfg}
+        eeg_trial_payload[trial_id] = {"params": params, "cfg": tuned_eegnet_cfg}
         _log_trial(logger, rec)
 
     eeg_candidates = [r for r in eeg_rows_confirm if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))]
@@ -590,6 +635,7 @@ def main() -> None:
         float(eeg_best_row.get("objective_value", np.nan)),
         float(eeg_best_row.get("tie_break_value", np.nan)),
     )
+
 
     # 2) GenAug+QC tuning (supports sequential generator families)
     qc_space = space_cfg.get("qc", {})
@@ -627,6 +673,7 @@ def main() -> None:
 
         gen_rows_screen: list[dict] = []
         gen_trial_payload: dict[str, dict] = {}
+        gen_screen_jobs: list[dict[str, Any]] = []
         for t in range(gen_trials):
             trial_id = f"{gen_target}_genaug_screen_{t:03d}"
             trial_seed = stable_hash_seed(
@@ -635,23 +682,32 @@ def main() -> None:
             rng = np.random.default_rng(trial_seed)
             gen_params = sample_from_space(gen_space, rng)
             qc_params = sample_from_space(qc_space, rng)
-            rec, tuned_gen_cfg, tuned_qc_cfg = _eval_genaug_trial(
-                trial_id=trial_id,
-                trial_seed=trial_seed,
-                phase="screen",
-                combos=screen_combos,
-                metric=metric,
-                alpha_ratio_ref=alpha_ratio_ref,
-                base_cfg=cfg,
-                eegnet_cfg=eeg_best_cfg,
-                generator_type=gen_target,
-                gen_params=gen_params,
-                qc_params=qc_params,
-                tuning_cfg=tuning_cfg,
-                c0_cache=c0_cache_screen,
-                run_root=tuning_root / "genaug",
-                config_pack=args.config_pack,
+            gen_screen_jobs.append(
+                {
+                    "trial_id": trial_id,
+                    "trial_seed": trial_seed,
+                    "phase": "screen",
+                    "combos": screen_combos,
+                    "metric": metric,
+                    "alpha_ratio_ref": alpha_ratio_ref,
+                    "base_cfg": cfg,
+                    "eegnet_cfg": eeg_best_cfg,
+                    "generator_type": gen_target,
+                    "gen_params": gen_params,
+                    "qc_params": qc_params,
+                    "tuning_cfg": tuning_cfg,
+                    "c0_cache": c0_cache_screen,
+                    "run_root": tuning_root / "genaug",
+                    "config_pack": args.config_pack,
+                }
             )
+
+        for job, (rec, tuned_gen_cfg, tuned_qc_cfg) in _run_trial_jobs(
+            _eval_genaug_trial, gen_screen_jobs, int(args.n_jobs)
+        ):
+            trial_id = str(job["trial_id"])
+            gen_params = job["gen_params"]
+            qc_params = job["qc_params"]
             append_tuning_trial(trials_csv, rec)
             write_json(
                 tuning_root / "genaug" / "trials" / f"{trial_id}.json",
@@ -679,37 +735,47 @@ def main() -> None:
         )
 
         gen_rows_confirm: list[dict] = []
+        gen_confirm_jobs: list[dict[str, Any]] = []
         for tid in gen_top_ids:
             payload = gen_trial_payload[tid]
             trial_seed = stable_hash_seed(
                 base_seed, {"target": "genaug_qc", "generator": gen_target, "trial_id": tid, "phase": "confirm"}
             )
-            rec, tuned_gen_cfg, tuned_qc_cfg = _eval_genaug_trial(
-                trial_id=f"{tid}_confirm",
-                trial_seed=trial_seed,
-                phase="confirm",
-                combos=full_combos,
-                metric=metric,
-                alpha_ratio_ref=alpha_ratio_ref,
-                base_cfg=cfg,
-                eegnet_cfg=eeg_best_cfg,
-                generator_type=gen_target,
-                gen_params=payload["gen_params"],
-                qc_params=payload["qc_params"],
-                tuning_cfg=tuning_cfg,
-                c0_cache=c0_cache_full,
-                run_root=tuning_root / "genaug",
-                config_pack=args.config_pack,
+            gen_confirm_jobs.append(
+                {
+                    "trial_id": f"{tid}_confirm",
+                    "trial_seed": trial_seed,
+                    "phase": "confirm",
+                    "combos": full_combos,
+                    "metric": metric,
+                    "alpha_ratio_ref": alpha_ratio_ref,
+                    "base_cfg": cfg,
+                    "eegnet_cfg": eeg_best_cfg,
+                    "generator_type": gen_target,
+                    "gen_params": payload["gen_params"],
+                    "qc_params": payload["qc_params"],
+                    "tuning_cfg": tuning_cfg,
+                    "c0_cache": c0_cache_full,
+                    "run_root": tuning_root / "genaug",
+                    "config_pack": args.config_pack,
+                }
             )
+
+        for job, (rec, tuned_gen_cfg, tuned_qc_cfg) in _run_trial_jobs(
+            _eval_genaug_trial, gen_confirm_jobs, int(args.n_jobs)
+        ):
+            trial_id = str(job["trial_id"])
+            gen_params = job["gen_params"]
+            qc_params = job["qc_params"]
             append_tuning_trial(trials_csv, rec)
             write_json(
-                tuning_root / "genaug" / "trials" / f"{tid}_confirm.json",
-                {"record": rec, "params": {"generator": payload["gen_params"], "qc": payload["qc_params"]}},
+                tuning_root / "genaug" / "trials" / f"{trial_id}.json",
+                {"record": rec, "params": {"generator": gen_params, "qc": qc_params}},
             )
             gen_rows_confirm.append(rec)
-            gen_trial_payload[f"{tid}_confirm"] = {
-                "gen_params": payload["gen_params"],
-                "qc_params": payload["qc_params"],
+            gen_trial_payload[trial_id] = {
+                "gen_params": gen_params,
+                "qc_params": qc_params,
                 "gen_cfg": tuned_gen_cfg,
                 "qc_cfg": tuned_qc_cfg,
             }
