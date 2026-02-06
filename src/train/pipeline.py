@@ -135,6 +135,9 @@ def _list_ckpts(gen_run_dir: Path) -> list[str]:
     - Globs ckpt_epoch_*.pt and sorts lexicographically.
     """
     ckpts = sorted(gen_run_dir.glob("ckpt_epoch_*.pt"))
+    best_ckpt = gen_run_dir / "ckpt_best_by_loss.pt"
+    if best_ckpt.exists():
+        ckpts.append(best_ckpt)
     return [str(p) for p in ckpts]
 
 

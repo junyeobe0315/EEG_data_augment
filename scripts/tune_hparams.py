@@ -274,6 +274,47 @@ def _build_c0_cache(
     return cache
 
 
+def _apply_generator_epoch_policy(gen_cfg: dict, tuning_cfg: dict, generator_type: str) -> dict:
+    """Apply tuning-time epoch policy (max epochs + early stopping) to generator cfg."""
+    out = copy.deepcopy(gen_cfg)
+    policy = tuning_cfg.get("generator_epoch_policy", {})
+    if not bool(policy.get("enabled", False)):
+        return out
+
+    train_cfg = out.setdefault("train", {})
+    max_epochs_cfg = policy.get("max_epochs", {})
+    default_max = 10000 if generator_type in {"cwgan_gp", "cvae"} else int(train_cfg.get("epochs", 200))
+    target_epochs = int(max_epochs_cfg.get(generator_type, default_max))
+    train_cfg["epochs"] = max(1, target_epochs)
+
+    if generator_type == "ddpm":
+        ddpm_cap = policy.get("ddpm_max_epochs", max_epochs_cfg.get("ddpm"))
+        if ddpm_cap is not None:
+            train_cfg["epochs"] = min(int(train_cfg["epochs"]), int(ddpm_cap))
+        if bool(policy.get("disable_ddpm_early_stopping", True)):
+            es = copy.deepcopy(train_cfg.get("early_stopping", {}))
+            es["enabled"] = False
+            train_cfg["early_stopping"] = es
+        return out
+
+    es_policy = policy.get("early_stopping", {})
+    es_cfg = copy.deepcopy(train_cfg.get("early_stopping", {}))
+    es_cfg["enabled"] = bool(es_policy.get("enabled", True))
+    es_cfg["patience_epochs"] = int(es_policy.get("patience_epochs", 500))
+    es_cfg["min_delta"] = float(es_policy.get("min_delta", 0.0))
+    es_cfg["mode"] = str(es_policy.get("mode", "min"))
+    monitor_cfg = es_policy.get("monitor", {})
+    if isinstance(monitor_cfg, dict):
+        es_cfg["monitor"] = str(monitor_cfg.get(generator_type, "loss"))
+    else:
+        es_cfg["monitor"] = str(monitor_cfg) if monitor_cfg else "loss"
+    train_cfg["early_stopping"] = es_cfg
+
+    if "save_every" in policy:
+        train_cfg["save_every"] = int(policy["save_every"])
+    return out
+
+
 def _eval_genaug_trial(
     trial_id: str,
     trial_seed: int,
@@ -283,8 +324,10 @@ def _eval_genaug_trial(
     alpha_ratio_ref: float,
     base_cfg: dict,
     eegnet_cfg: dict,
+    generator_type: str,
     gen_params: dict[str, Any],
     qc_params: dict[str, Any],
+    tuning_cfg: dict,
     c0_cache: dict[Combo, float],
     run_root: Path,
     config_pack: str,
@@ -293,7 +336,8 @@ def _eval_genaug_trial(
     model_cfgs = copy.deepcopy(base_cfg["models"])
     model_cfgs["eegnet"] = copy.deepcopy(eegnet_cfg)
     gen_cfgs = copy.deepcopy(base_cfg["generators"])
-    gen_cfgs["cwgan_gp"] = apply_dotted_params(gen_cfgs["cwgan_gp"], gen_params)
+    gen_cfgs[generator_type] = apply_dotted_params(gen_cfgs[generator_type], gen_params)
+    gen_cfgs[generator_type] = _apply_generator_epoch_policy(gen_cfgs[generator_type], tuning_cfg, generator_type)
     qc_cfg = apply_dotted_params(base_cfg["qc"], qc_params)
     alpha_search_cfg = base_cfg["experiment"].get("alpha_search", {})
 
@@ -310,7 +354,7 @@ def _eval_genaug_trial(
                 r=combo.r,
                 method="GenAug",
                 classifier="eegnet",
-                generator="cwgan_gp",
+                generator=generator_type,
                 alpha_ratio=float(alpha_ratio_ref),
                 qc_on=True,
                 dataset_cfg=base_cfg["dataset"],
@@ -341,7 +385,7 @@ def _eval_genaug_trial(
         status = "invalid"
         reason = "gain is NaN"
 
-    params_all = {"generator": gen_params, "qc": qc_params}
+    params_all = {"generator_type": generator_type, "generator": gen_params, "qc": qc_params}
     rec = _trial_common(
         target="genaug_qc",
         phase=phase,
@@ -356,7 +400,7 @@ def _eval_genaug_trial(
         status=status,
         reason=reason,
     )
-    return rec, gen_cfgs["cwgan_gp"], qc_cfg
+    return rec, gen_cfgs[generator_type], qc_cfg
 
 
 def _validate_inputs(cfg: dict, tuning_cfg: dict) -> None:
@@ -426,7 +470,11 @@ def main() -> None:
         eegnet_trials = min(eegnet_trials, int(args.max_trials))
         gen_trials = min(gen_trials, int(args.max_trials))
 
-    alpha_ratio_ref = float(tuning_cfg.get("genaug", {}).get("alpha_ratio_ref", 1.0))
+    genaug_cfg = tuning_cfg.get("genaug", {})
+    alpha_ratio_ref = float(genaug_cfg.get("alpha_ratio_ref", 1.0))
+    gen_target = str(genaug_cfg.get("generator", "cwgan_gp"))
+    if gen_target not in cfg["generators"]:
+        raise KeyError(f"Unknown tuning generator: {gen_target}")
     paths_cfg = tuning_cfg.get("paths", {})
     tuning_root = ensure_dir(paths_cfg.get("tuning_root", "./artifacts/tuning"))
     trials_csv = Path(paths_cfg.get("trials_csv", "./results/tuning_trials.csv"))
@@ -444,13 +492,14 @@ def main() -> None:
         top_k,
     )
     logger.info(
-        "pilot subjects=%s seeds=%s r=%s | screen seeds=%s r=%s | alpha_ref=%.3f",
+        "pilot subjects=%s seeds=%s r=%s | screen seeds=%s r=%s | alpha_ref=%.3f gen=%s",
         pilot_subjects,
         pilot_seeds,
         pilot_r,
         screen_seeds,
         screen_r,
         alpha_ratio_ref,
+        gen_target,
     )
     logger.info("artifacts tuning_root=%s trials_csv=%s", tuning_root, trials_csv)
 
@@ -522,7 +571,9 @@ def main() -> None:
     )
 
     # 2) GenAug+QC tuning
-    gen_space = space_cfg.get("cwgan_gp", {})
+    gen_space = space_cfg.get(gen_target, {})
+    if not gen_space:
+        raise KeyError(f"Search space for generator '{gen_target}' not found in {args.space_cfg}")
     qc_space = space_cfg.get("qc", {})
 
     c0_cache_screen = _build_c0_cache(
@@ -553,8 +604,10 @@ def main() -> None:
             alpha_ratio_ref=alpha_ratio_ref,
             base_cfg=cfg,
             eegnet_cfg=eeg_best_cfg,
+            generator_type=gen_target,
             gen_params=gen_params,
             qc_params=qc_params,
+            tuning_cfg=tuning_cfg,
             c0_cache=c0_cache_screen,
             run_root=tuning_root / "genaug",
             config_pack=args.config_pack,
@@ -601,8 +654,10 @@ def main() -> None:
             alpha_ratio_ref=alpha_ratio_ref,
             base_cfg=cfg,
             eegnet_cfg=eeg_best_cfg,
+            generator_type=gen_target,
             gen_params=payload["gen_params"],
             qc_params=payload["qc_params"],
+            tuning_cfg=tuning_cfg,
             c0_cache=c0_cache_full,
             run_root=tuning_root / "genaug",
             config_pack=args.config_pack,
@@ -666,7 +721,7 @@ def main() -> None:
             "phase": gen_best_row["phase"],
             "objective_value": float(gen_best_row["objective_value"]),
             "tie_break_value": float(gen_best_row["tie_break_value"]),
-            "generator": "cwgan_gp",
+            "generator": gen_target,
             "params": {
                 "generator": gen_best_payload.get("generator", {}),
                 "qc": gen_best_payload.get("qc", {}),

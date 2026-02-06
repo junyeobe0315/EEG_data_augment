@@ -16,8 +16,26 @@ budget:
   top_k: 4
 
 genaug:
+  generator: cwgan_gp
   alpha_ratio_ref: 1.0
   qc_on: true
+
+generator_epoch_policy:
+  enabled: true
+  max_epochs:
+    cwgan_gp: 10000
+    cvae: 10000
+    ddpm: 400
+  early_stopping:
+    enabled: true
+    patience_epochs: 500
+    min_delta: 0.0
+    mode: min
+    monitor:
+      cwgan_gp: loss_g
+      cvae: loss
+  save_every: 50
+  disable_ddpm_early_stopping: true
 
 paths:
   tuning_root: ./artifacts/tuning

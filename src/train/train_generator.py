@@ -97,6 +97,96 @@ def _save_ckpt(
     torch.save(payload, ckpt_path)
 
 
+def _build_early_stop_state(train_cfg: dict, model_type: str, run_dir: Path) -> dict[str, Any]:
+    """Create early-stopping state from train config."""
+    es_cfg = train_cfg.get("early_stopping", {}) if isinstance(train_cfg, dict) else {}
+    enabled = bool(es_cfg.get("enabled", False))
+    monitor_cfg = es_cfg.get("monitor", "auto")
+    if isinstance(monitor_cfg, dict):
+        monitor = str(monitor_cfg.get(model_type, "auto"))
+    else:
+        monitor = str(monitor_cfg)
+    if monitor == "auto":
+        monitor = {"cwgan_gp": "loss_g", "cvae": "loss", "ddpm": "loss"}.get(model_type, "loss")
+
+    mode = str(es_cfg.get("mode", "min")).lower()
+    if mode not in {"min", "max"}:
+        mode = "min"
+
+    patience = max(1, int(es_cfg.get("patience_epochs", es_cfg.get("patience", 500))))
+    min_delta = float(es_cfg.get("min_delta", 0.0))
+    start_epoch = max(1, int(es_cfg.get("start_epoch", 1)))
+    best_init = float("inf") if mode == "min" else float("-inf")
+    return {
+        "enabled": enabled,
+        "monitor": monitor,
+        "mode": mode,
+        "patience_epochs": patience,
+        "min_delta": min_delta,
+        "start_epoch": start_epoch,
+        "best_value": best_init,
+        "best_epoch": 0,
+        "no_improve_epochs": 0,
+        "stopped_epoch": 0,
+        "best_ckpt_path": run_dir / "ckpt_best_by_loss.pt",
+    }
+
+
+def _update_early_stop(
+    state: dict[str, Any],
+    row: dict[str, float],
+    epoch: int,
+    model_type: str,
+    gen: nn.Module,
+    critic: nn.Module | None,
+    model_cfg: dict,
+    train_cfg: dict,
+    shape: dict,
+) -> bool:
+    """Update early-stopping state and return whether training should stop."""
+    if not bool(state.get("enabled", False)):
+        return False
+    monitor = str(state.get("monitor", "loss"))
+    raw = row.get(monitor)
+    if raw is None:
+        return False
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return False
+    if not np.isfinite(value):
+        return False
+
+    best = float(state.get("best_value", float("inf")))
+    min_delta = float(state.get("min_delta", 0.0))
+    mode = str(state.get("mode", "min"))
+    improved = (value < (best - min_delta)) if mode == "min" else (value > (best + min_delta))
+
+    if improved:
+        state["best_value"] = value
+        state["best_epoch"] = int(epoch)
+        state["no_improve_epochs"] = 0
+        _save_ckpt(
+            ckpt_path=state["best_ckpt_path"],
+            model_type=model_type,
+            gen=gen,
+            critic=critic,
+            epoch=epoch,
+            model_cfg=model_cfg,
+            train_cfg=train_cfg,
+            shape=shape,
+        )
+    else:
+        state["no_improve_epochs"] = int(state.get("no_improve_epochs", 0)) + 1
+
+    if int(epoch) < int(state.get("start_epoch", 1)):
+        return False
+    if int(state.get("no_improve_epochs", 0)) >= int(state.get("patience_epochs", 1)):
+        state["stopped_epoch"] = int(epoch)
+        return True
+    return False
+
+
 def train_generator(
     x_train: np.ndarray,
     y_train: np.ndarray,
@@ -168,6 +258,8 @@ def train_generator(
     weight_decay = float(train_cfg.get("weight_decay", 0.0))  # L2 regularization
 
     save_every = int(train_cfg.get("save_every", max(1, epochs // 5)))  # ckpt interval
+    shape_meta = {"c": in_channels, "t": time_steps, "n_classes": num_classes}
+    es_state = _build_early_stop_state(train_cfg, model_type, run_dir)
 
     log_rows = []
     ckpts = []
@@ -249,8 +341,19 @@ def train_generator(
                 "loss_d": loss_d / max(1, n_batches),
             }
             log_rows.append(row)
+            stop_now = _update_early_stop(
+                state=es_state,
+                row=row,
+                epoch=epoch,
+                model_type=model_type,
+                gen=gen,
+                critic=critic,
+                model_cfg=model_cfg,
+                train_cfg=train_cfg,
+                shape=shape_meta,
+            )
 
-            if epoch % save_every == 0 or epoch == epochs:
+            if epoch % save_every == 0 or epoch == epochs or stop_now:
                 ckpt_path = run_dir / f"ckpt_epoch_{epoch:04d}.pt"
                 _save_ckpt(
                     ckpt_path=ckpt_path,
@@ -260,9 +363,11 @@ def train_generator(
                     epoch=epoch,
                     model_cfg=model_cfg,
                     train_cfg=train_cfg,
-                    shape={"c": in_channels, "t": time_steps, "n_classes": num_classes},
+                    shape=shape_meta,
                 )
                 ckpts.append(str(ckpt_path))
+            if stop_now:
+                break
 
     elif model_type == "cvae":
         opt = torch.optim.Adam(gen.parameters(), lr=lr, weight_decay=weight_decay)
@@ -291,8 +396,19 @@ def train_generator(
                 "kl_loss": kl_sum / max(1, n_batches),
             }
             log_rows.append(row)
+            stop_now = _update_early_stop(
+                state=es_state,
+                row=row,
+                epoch=epoch,
+                model_type=model_type,
+                gen=gen,
+                critic=None,
+                model_cfg=model_cfg,
+                train_cfg=train_cfg,
+                shape=shape_meta,
+            )
 
-            if epoch % save_every == 0 or epoch == epochs:
+            if epoch % save_every == 0 or epoch == epochs or stop_now:
                 ckpt_path = run_dir / f"ckpt_epoch_{epoch:04d}.pt"
                 _save_ckpt(
                     ckpt_path=ckpt_path,
@@ -302,9 +418,11 @@ def train_generator(
                     epoch=epoch,
                     model_cfg=model_cfg,
                     train_cfg=train_cfg,
-                    shape={"c": in_channels, "t": time_steps, "n_classes": num_classes},
+                    shape=shape_meta,
                 )
                 ckpts.append(str(ckpt_path))
+            if stop_now:
+                break
 
     elif model_type == "ddpm":
         opt = torch.optim.Adam(gen.parameters(), lr=lr, weight_decay=weight_decay)
@@ -324,8 +442,19 @@ def train_generator(
                 n_batches += 1
             row = {"epoch": epoch, "loss": loss_sum / max(1, n_batches)}
             log_rows.append(row)
+            stop_now = _update_early_stop(
+                state=es_state,
+                row=row,
+                epoch=epoch,
+                model_type=model_type,
+                gen=gen,
+                critic=None,
+                model_cfg=model_cfg,
+                train_cfg=train_cfg,
+                shape=shape_meta,
+            )
 
-            if epoch % save_every == 0 or epoch == epochs:
+            if epoch % save_every == 0 or epoch == epochs or stop_now:
                 ckpt_path = run_dir / f"ckpt_epoch_{epoch:04d}.pt"
                 _save_ckpt(
                     ckpt_path=ckpt_path,
@@ -335,14 +464,43 @@ def train_generator(
                     epoch=epoch,
                     model_cfg=model_cfg,
                     train_cfg=train_cfg,
-                    shape={"c": in_channels, "t": time_steps, "n_classes": num_classes},
+                    shape=shape_meta,
                 )
                 ckpts.append(str(ckpt_path))
+            if stop_now:
+                break
     else:
         raise ValueError(f"Unsupported generator type: {model_type}")
 
+    best_ckpt_path = Path(es_state.get("best_ckpt_path", ""))
+    if best_ckpt_path.exists():
+        best_ckpt_str = str(best_ckpt_path)
+        if best_ckpt_str not in ckpts:
+            ckpts.append(best_ckpt_str)
+
     runtime = float(time.time() - start_time)
-    write_json(run_dir / "train_log.json", {"rows": log_rows, "runtime_sec": runtime})
+    best_value = es_state.get("best_value", np.nan)
+    if not np.isfinite(float(best_value)):
+        best_value = None
+    write_json(
+        run_dir / "train_log.json",
+        {
+            "rows": log_rows,
+            "runtime_sec": runtime,
+            "early_stopping": {
+                "enabled": bool(es_state.get("enabled", False)),
+                "monitor": es_state.get("monitor"),
+                "mode": es_state.get("mode"),
+                "patience_epochs": int(es_state.get("patience_epochs", 0)),
+                "min_delta": float(es_state.get("min_delta", 0.0)),
+                "start_epoch": int(es_state.get("start_epoch", 1)),
+                "best_epoch": int(es_state.get("best_epoch", 0)),
+                "best_value": best_value,
+                "stopped_epoch": int(es_state.get("stopped_epoch", 0)),
+                "best_ckpt_path": str(best_ckpt_path) if best_ckpt_path.exists() else "",
+            },
+        },
+    )
     return {
         "ckpts": ckpts,
         "runtime_sec": runtime,

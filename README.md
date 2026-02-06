@@ -44,6 +44,10 @@ python scripts/run_grid.py --stage final_eval --config_pack base
 python scripts/tune_hparams.py --config_pack base
 python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
 ```
+Notes:
+- Generator tuning epoch policy is in `configs/tuning.yaml` (`generator_epoch_policy`).
+- Default policy uses long max epochs for GAN/VAE with early stopping (patience-based).
+- You can switch tuned generator family via `genaug.generator` (`cwgan_gp` or `cvae`).
 
 7. Generator speed comparison (runtime_sec):
 ```bash
@@ -120,6 +124,10 @@ python scripts/run_grid.py --stage final_eval --config_pack base
 python scripts/tune_hparams.py --config_pack base
 python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
 ```
+노트:
+- 생성기 튜닝 epoch 정책은 `configs/tuning.yaml`의 `generator_epoch_policy`에서 제어합니다.
+- 기본 정책은 GAN/VAE에 대해 큰 최대 epoch와 patience 기반 early stopping을 사용합니다.
+- `genaug.generator`를 `cwgan_gp` 또는 `cvae`로 바꿔 생성기 계열을 선택할 수 있습니다.
 
 7. 생성모델 속도 비교(runtime_sec):
 ```bash
