@@ -31,6 +31,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Select alpha* from validation results")
     parser.add_argument("--results", type=str, default="results/results.csv")
     parser.add_argument("--metric", type=str, default="val_kappa")
+    parser.add_argument("--config_pack", type=str, default="base")
     parser.add_argument("--qc_on", action="store_true")
     parser.add_argument("--out", type=str, default="./artifacts/alpha_star.json")
     parser.add_argument("--override", action="append", default=[])
@@ -41,6 +42,8 @@ def main() -> None:
 
     df = pd.read_csv(args.results)  # results table
     df = df[(df["method"] == "GenAug") & (df["classifier"] == screening_classifier)]
+    if "config_pack" in df.columns:
+        df = df[df["config_pack"] == str(args.config_pack)]
     if args.qc_on:
         df = df[df["qc_on"] == True]
 

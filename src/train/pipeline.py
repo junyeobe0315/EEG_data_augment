@@ -205,6 +205,7 @@ def run_experiment(
     stage: str = "full",
     compute_distance: bool = True,
     alpha_search_cfg: dict | None = None,
+    config_pack: str = "base",
 ) -> dict[str, Any]:
     """Run a single experiment configuration end-to-end.
 
@@ -245,6 +246,7 @@ def run_experiment(
 
     num_classes = int(np.max(y_train)) + 1  # inferred class count
     run_key = {
+        "config_pack": str(config_pack),
         "subject": subject,
         "seed": seed,
         "r": r,
@@ -264,6 +266,7 @@ def run_experiment(
         "models": model_cfgs,
         "generators": gen_cfgs,
         "qc": qc_cfg,
+        "config_pack": str(config_pack),
         "run": run_key,
         "stage": stage,
     })
@@ -656,6 +659,7 @@ def run_experiment(
             "qc": qc_cfg,
         }),
         "dataset": dataset_cfg["name"],
+        "config_pack": str(config_pack),
         "subject": subject,
         "seed": seed,
         "r": r,

@@ -14,10 +14,11 @@ if str(ROOT) not in sys.path:
 
 from src.train.pipeline import run_experiment
 from src.utils.config import load_yaml
+from src.utils.config_pack import load_yaml_with_pack
 from src.utils.results import append_result, has_primary_key, load_results, PRIMARY_KEY_FIELDS
 
 
-def _load_all_configs(overrides: list[str]) -> dict:
+def _load_all_configs(overrides: list[str], config_pack: str = "base") -> dict:
     """Load dataset, model, generator, and experiment configs.
 
     Inputs:
@@ -30,21 +31,22 @@ def _load_all_configs(overrides: list[str]) -> dict:
     - Loads each YAML file once and merges overrides into each config.
     """
     cfg = {
-        "dataset": load_yaml("configs/dataset_bci2a.yaml", overrides=overrides),
-        "preprocess": load_yaml("configs/preprocess.yaml", overrides=overrides),
-        "split": load_yaml("configs/split.yaml", overrides=overrides),
-        "qc": load_yaml("configs/qc.yaml", overrides=overrides),
+        "dataset": load_yaml_with_pack("configs/dataset_bci2a.yaml", config_pack=config_pack, overrides=overrides),
+        "preprocess": load_yaml_with_pack("configs/preprocess.yaml", config_pack=config_pack, overrides=overrides),
+        "split": load_yaml_with_pack("configs/split.yaml", config_pack=config_pack, overrides=overrides),
+        "qc": load_yaml_with_pack("configs/qc.yaml", config_pack=config_pack, overrides=overrides),
         "experiment": load_yaml("configs/experiment_grid.yaml", overrides=overrides),
         "models": {
-            "eegnet": load_yaml("configs/models/eegnet.yaml", overrides=overrides),
-            "eegconformer": load_yaml("configs/models/eegconformer.yaml", overrides=overrides),
-            "ctnet": load_yaml("configs/models/ctnet.yaml", overrides=overrides),
-            "svm": load_yaml("configs/models/fbcsp_svm.yaml", overrides=overrides),
+            "eegnet": load_yaml_with_pack("configs/models/eegnet.yaml", config_pack=config_pack, overrides=overrides),
+            "eegconformer": load_yaml_with_pack("configs/models/eegconformer.yaml", config_pack=config_pack, overrides=overrides),
+            "ctnet": load_yaml_with_pack("configs/models/ctnet.yaml", config_pack=config_pack, overrides=overrides),
+            "svm": load_yaml_with_pack("configs/models/fbcsp_svm.yaml", config_pack=config_pack, overrides=overrides),
         },
         "generators": {
-            "cwgan_gp": load_yaml("configs/generators/cwgan_gp.yaml", overrides=overrides),
-            "ddpm": load_yaml("configs/generators/ddpm.yaml", overrides=overrides),
+            "cwgan_gp": load_yaml_with_pack("configs/generators/cwgan_gp.yaml", config_pack=config_pack, overrides=overrides),
+            "ddpm": load_yaml_with_pack("configs/generators/ddpm.yaml", config_pack=config_pack, overrides=overrides),
         },
+        "config_pack": str(config_pack),
     }
     return cfg
 
@@ -152,6 +154,7 @@ def _run_group(
     alpha_search_cfg: dict,
     existing_keys: set[tuple],
     include_baselines_in_alpha_search: bool,
+    config_pack: str,
 ) -> list[dict]:
     """Run all grid rows for a (subject, seed, r) group.
 
@@ -191,6 +194,7 @@ def _run_group(
         for classifier in cls_list:
             if method != "GenAug":
                 row_key = {
+                    "config_pack": str(config_pack),
                     "subject": subject,
                     "seed": seed,
                     "r": r,
@@ -221,6 +225,7 @@ def _run_group(
                     stage=stage,
                     compute_distance=compute_distance,
                     alpha_search_cfg=alpha_search_cfg,
+                    config_pack=str(config_pack),
                 )
                 rows.append(row)
                 continue
@@ -240,6 +245,7 @@ def _run_group(
                 for alpha_ratio in alpha_candidates:
                     for qc_on in qc_on_list:
                         row_key = {
+                            "config_pack": str(config_pack),
                             "subject": subject,
                             "seed": seed,
                             "r": r,
@@ -271,6 +277,7 @@ def _run_group(
                             stage=stage,
                             compute_distance=compute_distance,
                             alpha_search_cfg=alpha_search_cfg,
+                            config_pack=str(config_pack),
                         )
                         rows.append(row)
 
@@ -295,12 +302,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run experiment grid")
     parser.add_argument("--stage", type=str, default=None, choices=["alpha_search", "final_eval", "full"])
     parser.add_argument("--results", type=str, default="results/results.csv")
+    parser.add_argument("--config_pack", type=str, default="base")
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--n_jobs", type=int, default=1)
     parser.add_argument("--log_every_groups", type=int, default=5)
     args = parser.parse_args()
 
-    cfg = _load_all_configs(args.override)
+    cfg = _load_all_configs(args.override, config_pack=args.config_pack)
     exp_cfg = cfg["experiment"]  # grid + stage settings
     stage = args.stage or exp_cfg.get("stage", {}).get("mode", "full")  # alpha_search/final_eval/full
     screening_classifier = exp_cfg.get("stage", {}).get("screening_classifier", "eegnet")  # EEGNet by default
@@ -355,6 +363,7 @@ def main() -> None:
                 alpha_search_cfg=alpha_search_cfg,
                 existing_keys=existing_keys,
                 include_baselines_in_alpha_search=include_baselines_in_alpha_search,
+                config_pack=str(args.config_pack),
             )
             for row in rows:
                 appended = append_result(args.results, row)
@@ -382,6 +391,7 @@ def main() -> None:
                 alpha_search_cfg,
                 existing_keys,
                 include_baselines_in_alpha_search,
+                str(args.config_pack),
             ): (subject, seed, r)
             for subject, seed, r in groups
         }

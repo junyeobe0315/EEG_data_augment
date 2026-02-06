@@ -1,0 +1,63 @@
+eegnet:
+  model.F1:
+    type: choice
+    values: [8, 12, 16]
+  model.D:
+    type: choice
+    values: [2, 3]
+  model.dropout:
+    type: choice
+    values: [0.2, 0.3, 0.4]
+  train.lr:
+    type: log_uniform
+    low: 3.0e-4
+    high: 3.0e-3
+  train.weight_decay:
+    type: log_uniform
+    low: 1.0e-5
+    high: 5.0e-4
+  train.batch_size:
+    type: choice
+    values: [16, 32, 64]
+  train.step_control.total_steps:
+    type: choice
+    values: [1000, 2000]
+
+cwgan_gp:
+  model.latent_dim:
+    type: choice
+    values: [64, 128, 256]
+  model.base_channels:
+    type: choice
+    values: [32, 64, 96]
+  train.lr:
+    type: log_uniform
+    low: 1.0e-4
+    high: 3.0e-4
+  train.weight_decay:
+    type: log_uniform
+    low: 1.0e-6
+    high: 3.0e-5
+  train.n_critic:
+    type: choice
+    values: [3, 5]
+  train.lambda_gp:
+    type: choice
+    values: [5.0, 10.0, 15.0]
+  train.batch_size:
+    type: choice
+    values: [16, 32, 64]
+  checkpoint_selection.sample_n_per_class:
+    type: choice
+    values: [30, 50, 70]
+
+qc:
+  psd.z_threshold:
+    type: choice
+    values: [2.0, 2.5, 3.0]
+  covariance.dist_threshold_quantile:
+    type: choice
+    values: [0.90, 0.95, 0.98]
+  max_attempt_factor:
+    type: choice
+    values: [2.0, 3.0, 4.0]

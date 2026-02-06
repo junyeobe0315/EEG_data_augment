@@ -66,13 +66,20 @@ def main() -> None:
     parser.add_argument("--paired_out", type=str, default="results/paired_stats.csv")
     parser.add_argument("--gain_out", type=str, default="results/gain_distance.csv")
     parser.add_argument("--metric", type=str, default="kappa", choices=["acc", "kappa", "macro_f1"])
+    parser.add_argument("--config_pack", type=str, default="all")
     args = parser.parse_args()
 
     df = pd.read_csv(args.results)  # full results table
     if df.empty:
         raise RuntimeError("results.csv is empty.")
+    if args.config_pack != "all" and "config_pack" in df.columns:
+        df = df[df["config_pack"] == str(args.config_pack)]
+    if df.empty:
+        raise RuntimeError("No rows remain after filtering.")
 
     group_cols = ["method", "classifier", "r", "alpha_ratio", "qc_on", "generator"]  # grouping keys
+    if "config_pack" in df.columns:
+        group_cols = ["config_pack"] + group_cols
     metrics = [m for m in ["acc", "kappa", "macro_f1"] if m in df.columns]
 
     summary = df.groupby(group_cols)[metrics].agg(["mean", "std"]).reset_index()
@@ -82,6 +89,8 @@ def main() -> None:
 
     # Paired GenAug vs C0 (same subject/seed/r/classifier)
     key_cols = ["subject", "seed", "r", "classifier"]
+    if "config_pack" in df.columns:
+        key_cols = ["config_pack"] + key_cols
     base_cols = key_cols + metrics
     gen_cols = key_cols + ["generator", "qc_on", "alpha_ratio", "pass_rate"] + metrics
     if "distance" in df.columns:
@@ -95,16 +104,25 @@ def main() -> None:
 
     paired_rows: list[dict] = []
     group_keys = ["classifier", "r", "generator", "qc_on", "alpha_ratio"]
+    if "config_pack" in merged.columns:
+        group_keys = ["config_pack"] + group_keys
     for key, g in merged.groupby(group_keys):
-        classifier, r, generator, qc_on, alpha_ratio = key
-        row = {
-            "classifier": classifier,
-            "r": float(r),
-            "generator": generator,
-            "qc_on": bool(qc_on),
-            "alpha_ratio": float(alpha_ratio),
-            "n_pairs": int(len(g)),
-        }
+        row = {}
+        if "config_pack" in merged.columns:
+            config_pack, classifier, r, generator, qc_on, alpha_ratio = key
+            row["config_pack"] = config_pack
+        else:
+            classifier, r, generator, qc_on, alpha_ratio = key
+        row.update(
+            {
+                "classifier": classifier,
+                "r": float(r),
+                "generator": generator,
+                "qc_on": bool(qc_on),
+                "alpha_ratio": float(alpha_ratio),
+                "n_pairs": int(len(g)),
+            }
+        )
         for m in metrics:
             diff = (g[f"{m}_gen"] - g[f"{m}_c0"]).to_numpy(dtype=np.float64)
             diff = diff[np.isfinite(diff)]

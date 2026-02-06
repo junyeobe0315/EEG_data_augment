@@ -56,6 +56,7 @@ def test_alpha_search_runs_genaug_only_by_default(monkeypatch: pytest.MonkeyPatc
         alpha_search_cfg={},
         existing_keys=set(),
         include_baselines_in_alpha_search=False,
+        config_pack="base",
     )
 
     assert rows
@@ -101,4 +102,5 @@ def test_final_eval_requires_alpha_star(monkeypatch: pytest.MonkeyPatch) -> None
             alpha_search_cfg={},
             existing_keys=set(),
             include_baselines_in_alpha_search=False,
+            config_pack="base",
         )

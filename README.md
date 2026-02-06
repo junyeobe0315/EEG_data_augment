@@ -27,21 +27,27 @@ python scripts/prepare_splits.py
 
 3. Run a single baseline:
 ```bash
-python scripts/run_single.py --subject 1 --seed 0 --r 0.1 --method C0 --classifier eegnet
+python scripts/run_single.py --subject 1 --seed 0 --r 0.1 --method C0 --classifier eegnet --config_pack base
 ```
 
 4. Stage-1 alpha search (EEGNet only):
 ```bash
-python scripts/run_grid.py --stage alpha_search
-python scripts/select_alpha.py --metric val_kappa
+python scripts/run_grid.py --stage alpha_search --config_pack base
+python scripts/select_alpha.py --metric val_kappa --config_pack base
 ```
 
 5. Stage-2 final evaluation:
 ```bash
-python scripts/run_grid.py --stage final_eval
+python scripts/run_grid.py --stage final_eval --config_pack base
 ```
 
-6. Summaries / plots:
+6. (Optional) Hyperparameter tuning + apply tuned pack:
+```bash
+python scripts/tune_hparams.py --config_pack base
+python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
+```
+
+7. Summaries / plots:
 ```bash
 python scripts/summarize_results.py
 python scripts/plot_results.py --metric kappa
@@ -95,21 +101,27 @@ python scripts/prepare_splits.py
 
 3. 단일 베이스라인 실행:
 ```bash
-python scripts/run_single.py --subject 1 --seed 0 --r 0.1 --method C0 --classifier eegnet
+python scripts/run_single.py --subject 1 --seed 0 --r 0.1 --method C0 --classifier eegnet --config_pack base
 ```
 
 4. Stage-1 알파 서치(EEGNet만):
 ```bash
-python scripts/run_grid.py --stage alpha_search
-python scripts/select_alpha.py --metric val_kappa
+python scripts/run_grid.py --stage alpha_search --config_pack base
+python scripts/select_alpha.py --metric val_kappa --config_pack base
 ```
 
 5. Stage-2 최종 평가:
 ```bash
-python scripts/run_grid.py --stage final_eval
+python scripts/run_grid.py --stage final_eval --config_pack base
 ```
 
-6. 요약/플롯 생성:
+6. (선택) 하이퍼파라미터 튜닝 + tuned 팩 반영:
+```bash
+python scripts/tune_hparams.py --config_pack base
+python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
+```
+
+7. 요약/플롯 생성:
 ```bash
 python scripts/summarize_results.py
 python scripts/plot_results.py --metric kappa

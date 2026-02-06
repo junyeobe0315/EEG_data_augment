@@ -10,6 +10,7 @@ import pandas as pd
 
 
 PRIMARY_KEY_FIELDS = [
+    "config_pack",
     "subject",
     "seed",
     "r",
@@ -27,6 +28,7 @@ RESULT_COLUMNS = [
     "git_commit",
     "config_hash",
     "dataset",
+    "config_pack",
     "subject",
     "seed",
     "r",

@@ -1,0 +1,28 @@
+seed: 2026
+objective_metric: val_kappa
+
+pilot:
+  subjects: [1, 2, 3]      # A01-A03
+  seeds: [0, 1]
+  r_list: [0.01, 0.05, 0.1, 0.2, 1.0]
+
+screening:
+  seeds: [0]
+  r_list: [0.01, 0.1, 1.0]
+
+budget:
+  eegnet_trials: 18
+  genaug_trials: 18
+  top_k: 4
+
+genaug:
+  alpha_ratio_ref: 1.0
+  qc_on: true
+
+paths:
+  tuning_root: ./artifacts/tuning
+  trials_csv: ./results/tuning_trials.csv
+  best_params_json: ./artifacts/tuning/best_params.json
+
+failure:
+  continue_on_error: true

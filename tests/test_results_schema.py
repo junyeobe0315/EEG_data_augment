@@ -19,6 +19,7 @@ def test_results_primary_key_skip(tmp_path: Path) -> None:
     """
     path = tmp_path / "results.csv"
     row = {
+        "config_pack": "base",
         "subject": 1,
         "seed": 0,
         "r": 0.1,
@@ -37,6 +38,7 @@ def test_results_primary_key_skip(tmp_path: Path) -> None:
                 "generator": "none",
                 "qc_on": False,
                 "alpha_ratio": 0.0,
+                "config_pack": "base",
             }
         ),
     }

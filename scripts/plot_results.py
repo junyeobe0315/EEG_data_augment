@@ -104,11 +104,16 @@ def main() -> None:
     parser.add_argument("--results", type=str, default="results/results.csv")
     parser.add_argument("--out_dir", type=str, default="artifacts/figures")
     parser.add_argument("--metric", type=str, default="kappa")
+    parser.add_argument("--config_pack", type=str, default="all")
     args = parser.parse_args()
 
     df = pd.read_csv(args.results)  # full results table
     if df.empty:
         raise RuntimeError("results.csv is empty.")
+    if args.config_pack != "all" and "config_pack" in df.columns:
+        df = df[df["config_pack"] == str(args.config_pack)]
+    if df.empty:
+        raise RuntimeError("No rows remain after filtering.")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
