@@ -17,6 +17,8 @@ def normalize_generator_type(model_type: str) -> str:
     alias = {
         "cwgan_gp": "cwgan_gp",
         "cwgangp": "cwgan_gp",
+        "cvae": "cvae",
+        "conditional_vae": "cvae",
         "ddpm": "ddpm",
         "conditional_ddpm": "ddpm",
     }

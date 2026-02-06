@@ -119,7 +119,7 @@ def train_generator(
     - dict with ckpt paths, runtime, model_type, and shape metadata.
 
     Internal logic:
-    - Builds generator/critic, trains by type (cwgan_gp or ddpm), and saves checkpoints.
+    - Builds generator/critic, trains by type (cwgan_gp/cvae/ddpm), and saves checkpoints.
     """
     ensure_dir(run_dir)
     set_global_seed(seed)
@@ -264,6 +264,48 @@ def train_generator(
                 )
                 ckpts.append(str(ckpt_path))
 
+    elif model_type == "cvae":
+        opt = torch.optim.Adam(gen.parameters(), lr=lr, weight_decay=weight_decay)
+        for epoch in range(1, epochs + 1):
+            gen.train()
+            loss_sum = 0.0
+            rec_sum = 0.0
+            kl_sum = 0.0
+            n_batches = 0
+            for xb, yb in dl:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                out = gen.loss(xb, yb)
+                loss = out["loss"]
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                loss_sum += float(loss.item())
+                rec_sum += float(out.get("recon_loss", torch.tensor(0.0, device=device)).item())
+                kl_sum += float(out.get("kl_loss", torch.tensor(0.0, device=device)).item())
+                n_batches += 1
+            row = {
+                "epoch": epoch,
+                "loss": loss_sum / max(1, n_batches),
+                "recon_loss": rec_sum / max(1, n_batches),
+                "kl_loss": kl_sum / max(1, n_batches),
+            }
+            log_rows.append(row)
+
+            if epoch % save_every == 0 or epoch == epochs:
+                ckpt_path = run_dir / f"ckpt_epoch_{epoch:04d}.pt"
+                _save_ckpt(
+                    ckpt_path=ckpt_path,
+                    model_type=model_type,
+                    gen=gen,
+                    critic=None,
+                    epoch=epoch,
+                    model_cfg=model_cfg,
+                    train_cfg=train_cfg,
+                    shape={"c": in_channels, "t": time_steps, "n_classes": num_classes},
+                )
+                ckpts.append(str(ckpt_path))
+
     elif model_type == "ddpm":
         opt = torch.optim.Adam(gen.parameters(), lr=lr, weight_decay=weight_decay)
         for epoch in range(1, epochs + 1):
@@ -338,9 +380,12 @@ class LoadedGeneratorSampler:
     def sample(self, y: np.ndarray, ddpm_steps: int | None = None) -> np.ndarray:
         """Sample synthetic trials for a label vector using the loaded model."""
         y_t = torch.from_numpy(y.astype(np.int64)).to(self.device)
-        if self.model_type == "cwgan_gp":
+        if self.model_type in {"cwgan_gp", "cvae"}:
             z = torch.randn(y_t.size(0), self.gen.latent_dim, device=self.device)
-            out = self.gen(z, y_t)
+            if self.model_type == "cwgan_gp":
+                out = self.gen(z, y_t)
+            else:
+                out = self.gen.decode(z, y_t)
         elif self.model_type == "ddpm":
             out = self.gen.sample(y_t, num_steps=ddpm_steps)
         else:

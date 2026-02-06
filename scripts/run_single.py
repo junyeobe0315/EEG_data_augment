@@ -39,6 +39,7 @@ def _load_all_configs(overrides: list[str], config_pack: str = "base") -> dict:
         },
         "generators": {
             "cwgan_gp": load_yaml_with_pack("configs/generators/cwgan_gp.yaml", config_pack=config_pack, overrides=overrides),
+            "cvae": load_yaml_with_pack("configs/generators/cvae.yaml", config_pack=config_pack, overrides=overrides),
             "ddpm": load_yaml_with_pack("configs/generators/ddpm.yaml", config_pack=config_pack, overrides=overrides),
         },
         "config_pack": str(config_pack),
@@ -65,7 +66,7 @@ def main() -> None:
     parser.add_argument("--r", type=float, required=True)
     parser.add_argument("--method", type=str, required=True, choices=["C0", "C1", "C2", "GenAug"])
     parser.add_argument("--classifier", type=str, required=True, choices=["eegnet", "eegconformer", "ctnet", "svm"])
-    parser.add_argument("--generator", type=str, default="cwgan_gp", choices=["cwgan_gp", "ddpm"])
+    parser.add_argument("--generator", type=str, default="cwgan_gp", choices=["cwgan_gp", "cvae", "ddpm"])
     parser.add_argument("--alpha_ratio", type=float, default=0.0)
     parser.add_argument("--qc_on", action="store_true")
     parser.add_argument("--stage", type=str, default="full", choices=["alpha_search", "final_eval", "full"])

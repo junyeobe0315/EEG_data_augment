@@ -1,0 +1,36 @@
+type: cvae
+model:
+  latent_dim: 64
+  base_channels: 64
+  cond_dim: 16
+  beta_kl: 0.001
+train:
+  epochs: 120
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 1.0e-5
+  num_workers: 0
+  amp:
+    enabled: false
+    dtype: float16
+sample:
+  n_per_class: 300
+  dynamic_n_per_class: true
+  dynamic_buffer: 1.2
+checkpoint_selection:
+  enabled: true
+  metric: bal_acc
+  alpha_ratio_ref: 1.0
+  sample_n_per_class: 50
+  qc_enabled: true
+  overgen_buffer: 1.2
+  proxy_classifier:
+    model: eegnet
+    device: auto
+    steps: 120
+    batch_size: 64
+    lr: 0.001
+
+pool:
+  enabled: true
+  alpha_ratio_max: 2.0

@@ -45,7 +45,12 @@ python scripts/tune_hparams.py --config_pack base
 python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
 ```
 
-7. Summaries / plots:
+7. Generator speed comparison (runtime_sec):
+```bash
+python scripts/compare_generator_speed.py --results results/results.csv --classifier eegnet --out results/generator_speed.csv
+```
+
+8. Summaries / plots:
 ```bash
 python scripts/summarize_results.py
 python scripts/plot_results.py --metric kappa
@@ -116,7 +121,12 @@ python scripts/tune_hparams.py --config_pack base
 python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
 ```
 
-7. 요약/플롯 생성:
+7. 생성모델 속도 비교(runtime_sec):
+```bash
+python scripts/compare_generator_speed.py --results results/results.csv --classifier eegnet --out results/generator_speed.csv
+```
+
+8. 요약/플롯 생성:
 ```bash
 python scripts/summarize_results.py
 python scripts/plot_results.py --metric kappa

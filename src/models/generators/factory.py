@@ -6,6 +6,7 @@ from typing import Any
 import torch
 
 from src.models.generators.base import normalize_generator_type
+from src.models.generators.cvae import ConditionalVAE1D
 from src.models.generators.cwgan_gp import CWGANGenerator, CWGANCritic
 from src.models.generators.ddpm import ConditionalDDPM1D
 
@@ -39,6 +40,16 @@ def build_generator(
             latent_dim=int(model_cfg.get("latent_dim", 128)),
             base_channels=int(model_cfg.get("base_channels", 64)),
             cond_dim=int(model_cfg.get("cond_dim", 16)),
+        )
+    if mtype == "cvae":
+        return ConditionalVAE1D(
+            in_channels=in_channels,
+            time_steps=time_steps,
+            num_classes=num_classes,
+            latent_dim=int(model_cfg.get("latent_dim", 64)),
+            base_channels=int(model_cfg.get("base_channels", 64)),
+            cond_dim=int(model_cfg.get("cond_dim", 16)),
+            beta_kl=float(model_cfg.get("beta_kl", 1.0e-3)),
         )
     if mtype == "ddpm":
         return ConditionalDDPM1D(

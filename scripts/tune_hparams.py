@@ -42,6 +42,7 @@ def _load_all_configs(overrides: list[str], config_pack: str = "base") -> dict:
         },
         "generators": {
             "cwgan_gp": load_yaml_with_pack("configs/generators/cwgan_gp.yaml", config_pack=config_pack, overrides=overrides),
+            "cvae": load_yaml_with_pack("configs/generators/cvae.yaml", config_pack=config_pack, overrides=overrides),
             "ddpm": load_yaml_with_pack("configs/generators/ddpm.yaml", config_pack=config_pack, overrides=overrides),
         },
     }
