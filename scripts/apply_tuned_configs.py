@@ -49,7 +49,9 @@ def main() -> None:
         pass
 
     eegnet_base = load_yaml_with_pack("configs/models/eegnet.yaml", config_pack=args.base_pack)
-    gen_base = load_yaml_with_pack("configs/generators/cwgan_gp.yaml", config_pack=args.base_pack)
+    tuned_generator = str(best.get("genaug_qc", {}).get("generator", "cwgan_gp"))
+    gen_base_path = f"configs/generators/{tuned_generator}.yaml"
+    gen_base = load_yaml_with_pack(gen_base_path, config_pack=args.base_pack)
     qc_base = load_yaml_with_pack("configs/qc.yaml", config_pack=args.base_pack)
 
     eegnet_params = best.get("eegnet", {}).get("params", {})
@@ -61,7 +63,7 @@ def main() -> None:
     qc_tuned = _apply_params(qc_base, qc_params)
 
     save_yaml(out_dir / "models" / "eegnet.yaml", eegnet_tuned)
-    save_yaml(out_dir / "generators" / "cwgan_gp.yaml", gen_tuned)
+    save_yaml(out_dir / "generators" / f"{tuned_generator}.yaml", gen_tuned)
     save_yaml(out_dir / "qc.yaml", qc_tuned)
 
     manifest = {
@@ -69,9 +71,10 @@ def main() -> None:
         "git_commit": get_git_commit(),
         "best_source": str(Path(args.best).resolve()),
         "base_pack": str(args.base_pack),
+        "generator": tuned_generator,
         "written": [
             str((out_dir / "models" / "eegnet.yaml").as_posix()),
-            str((out_dir / "generators" / "cwgan_gp.yaml").as_posix()),
+            str((out_dir / "generators" / f"{tuned_generator}.yaml").as_posix()),
             str((out_dir / "qc.yaml").as_posix()),
         ],
     }

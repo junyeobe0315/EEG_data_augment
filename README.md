@@ -43,6 +43,8 @@ python scripts/run_grid.py --stage final_eval --config_pack base
 ```bash
 python scripts/tune_hparams.py --config_pack base
 python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
+# GAN->VAE 순차 튜닝
+python scripts/tune_hparams.py --config_pack base --gen_sequence cwgan_gp cvae
 ```
 Notes:
 - Generator tuning epoch policy is in `configs/tuning.yaml` (`generator_epoch_policy`).
@@ -123,6 +125,8 @@ python scripts/run_grid.py --stage final_eval --config_pack base
 ```bash
 python scripts/tune_hparams.py --config_pack base
 python scripts/apply_tuned_configs.py --best artifacts/tuning/best_params.json --out_dir configs/tuned
+# GAN->VAE 순차 튜닝
+python scripts/tune_hparams.py --config_pack base --gen_sequence cwgan_gp cvae
 ```
 노트:
 - 생성기 튜닝 epoch 정책은 `configs/tuning.yaml`의 `generator_epoch_policy`에서 제어합니다.

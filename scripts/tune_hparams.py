@@ -436,11 +436,34 @@ def _log_trial(logger, rec: dict) -> None:
         logger.warning("[trial] id=%s reason=%s", rec.get("trial_id"), reason)
 
 
+def _dedupe_keep_order(items: list[str]) -> list[str]:
+    """Return list with duplicates removed while preserving input order."""
+    out: list[str] = []
+    for x in items:
+        if x not in out:
+            out.append(x)
+    return out
+
+
+def _resolve_generator_targets(args, tuning_cfg: dict, cfg: dict) -> list[str]:
+    """Resolve generator tuning sequence from CLI or tuning config."""
+    if args.gen_sequence:
+        targets = _dedupe_keep_order([str(x) for x in args.gen_sequence])
+    else:
+        genaug_cfg = tuning_cfg.get("genaug", {})
+        targets = [str(genaug_cfg.get("generator", "cwgan_gp"))]
+    missing = [g for g in targets if g not in cfg.get("generators", {})]
+    if missing:
+        raise KeyError(f"Unknown tuning generator(s): {missing}")
+    return targets
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tune EEGNet and cWGAN/QC hyperparameters with random search")
     parser.add_argument("--config_pack", type=str, default="base")
     parser.add_argument("--tuning_cfg", type=str, default="configs/tuning.yaml")
     parser.add_argument("--space_cfg", type=str, default="configs/hparam_space.yaml")
+    parser.add_argument("--gen_sequence", type=str, nargs="+", choices=["cwgan_gp", "cvae", "ddpm"], default=None)
     parser.add_argument("--max_trials", type=int, default=None)
     parser.add_argument("--override", action="append", default=[])
     args = parser.parse_args()
@@ -472,9 +495,7 @@ def main() -> None:
 
     genaug_cfg = tuning_cfg.get("genaug", {})
     alpha_ratio_ref = float(genaug_cfg.get("alpha_ratio_ref", 1.0))
-    gen_target = str(genaug_cfg.get("generator", "cwgan_gp"))
-    if gen_target not in cfg["generators"]:
-        raise KeyError(f"Unknown tuning generator: {gen_target}")
+    gen_targets = _resolve_generator_targets(args, tuning_cfg, cfg)
     paths_cfg = tuning_cfg.get("paths", {})
     tuning_root = ensure_dir(paths_cfg.get("tuning_root", "./artifacts/tuning"))
     trials_csv = Path(paths_cfg.get("trials_csv", "./results/tuning_trials.csv"))
@@ -492,14 +513,14 @@ def main() -> None:
         top_k,
     )
     logger.info(
-        "pilot subjects=%s seeds=%s r=%s | screen seeds=%s r=%s | alpha_ref=%.3f gen=%s",
+        "pilot subjects=%s seeds=%s r=%s | screen seeds=%s r=%s | alpha_ref=%.3f gen_sequence=%s",
         pilot_subjects,
         pilot_seeds,
         pilot_r,
         screen_seeds,
         screen_r,
         alpha_ratio_ref,
-        gen_target,
+        gen_targets,
     )
     logger.info("artifacts tuning_root=%s trials_csv=%s", tuning_root, trials_csv)
 
@@ -570,10 +591,7 @@ def main() -> None:
         float(eeg_best_row.get("tie_break_value", np.nan)),
     )
 
-    # 2) GenAug+QC tuning
-    gen_space = space_cfg.get(gen_target, {})
-    if not gen_space:
-        raise KeyError(f"Search space for generator '{gen_target}' not found in {args.space_cfg}")
+    # 2) GenAug+QC tuning (supports sequential generator families)
     qc_space = space_cfg.get("qc", {})
 
     c0_cache_screen = _build_c0_cache(
@@ -585,51 +603,6 @@ def main() -> None:
         config_pack=args.config_pack,
         cache_name="c0_screen",
     )
-    logger.info("genaug screen baseline cache built combos=%d", len(c0_cache_screen))
-
-    gen_rows_screen: list[dict] = []
-    gen_trial_payload: dict[str, dict] = {}
-    for t in range(gen_trials):
-        trial_id = f"genaug_screen_{t:03d}"
-        trial_seed = stable_hash_seed(base_seed, {"target": "genaug_qc", "trial": t, "phase": "screen"})
-        rng = np.random.default_rng(trial_seed)
-        gen_params = sample_from_space(gen_space, rng)
-        qc_params = sample_from_space(qc_space, rng)
-        rec, tuned_gen_cfg, tuned_qc_cfg = _eval_genaug_trial(
-            trial_id=trial_id,
-            trial_seed=trial_seed,
-            phase="screen",
-            combos=screen_combos,
-            metric=metric,
-            alpha_ratio_ref=alpha_ratio_ref,
-            base_cfg=cfg,
-            eegnet_cfg=eeg_best_cfg,
-            generator_type=gen_target,
-            gen_params=gen_params,
-            qc_params=qc_params,
-            tuning_cfg=tuning_cfg,
-            c0_cache=c0_cache_screen,
-            run_root=tuning_root / "genaug",
-            config_pack=args.config_pack,
-        )
-        append_tuning_trial(trials_csv, rec)
-        write_json(
-            tuning_root / "genaug" / "trials" / f"{trial_id}.json",
-            {"record": rec, "params": {"generator": gen_params, "qc": qc_params}},
-        )
-        gen_rows_screen.append(rec)
-        gen_trial_payload[trial_id] = {
-            "gen_params": gen_params,
-            "qc_params": qc_params,
-            "gen_cfg": tuned_gen_cfg,
-            "qc_cfg": tuned_qc_cfg,
-        }
-        _log_trial(logger, rec)
-
-    gen_rows_screen_ok = [r for r in gen_rows_screen if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))]
-    gen_top_ids = [r["trial_id"] for r in _sort_trials(gen_rows_screen_ok)[:top_k]]
-    logger.info("genaug screen done valid=%d/%d top_ids=%s", len(gen_rows_screen_ok), len(gen_rows_screen), gen_top_ids)
-
     c0_cache_full = _build_c0_cache(
         combos=full_combos,
         metric=metric,
@@ -639,54 +612,145 @@ def main() -> None:
         config_pack=args.config_pack,
         cache_name="c0_full",
     )
-    logger.info("genaug confirm baseline cache built combos=%d", len(c0_cache_full))
-
-    gen_rows_confirm: list[dict] = []
-    for tid in gen_top_ids:
-        payload = gen_trial_payload[tid]
-        trial_seed = stable_hash_seed(base_seed, {"target": "genaug_qc", "trial_id": tid, "phase": "confirm"})
-        rec, tuned_gen_cfg, tuned_qc_cfg = _eval_genaug_trial(
-            trial_id=f"{tid}_confirm",
-            trial_seed=trial_seed,
-            phase="confirm",
-            combos=full_combos,
-            metric=metric,
-            alpha_ratio_ref=alpha_ratio_ref,
-            base_cfg=cfg,
-            eegnet_cfg=eeg_best_cfg,
-            generator_type=gen_target,
-            gen_params=payload["gen_params"],
-            qc_params=payload["qc_params"],
-            tuning_cfg=tuning_cfg,
-            c0_cache=c0_cache_full,
-            run_root=tuning_root / "genaug",
-            config_pack=args.config_pack,
-        )
-        append_tuning_trial(trials_csv, rec)
-        write_json(
-            tuning_root / "genaug" / "trials" / f"{tid}_confirm.json",
-            {"record": rec, "params": {"generator": payload["gen_params"], "qc": payload["qc_params"]}},
-        )
-        gen_rows_confirm.append(rec)
-        gen_trial_payload[f"{tid}_confirm"] = {
-            "gen_params": payload["gen_params"],
-            "qc_params": payload["qc_params"],
-            "gen_cfg": tuned_gen_cfg,
-            "qc_cfg": tuned_qc_cfg,
-        }
-        _log_trial(logger, rec)
-
-    gen_candidates = [r for r in gen_rows_confirm if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))]
-    if not gen_candidates:
-        gen_candidates = gen_rows_screen_ok
-    if not gen_candidates:
-        raise RuntimeError("No valid GenAug/QC tuning trials.")
-    gen_best_row = _sort_trials(gen_candidates)[0]
-    gen_best_payload = json.loads(gen_best_row["params_json"])
     logger.info(
-        "genaug/qc best trial=%s phase=%s obj=%.4f tie=%.4f",
+        "genaug baseline cache built screen=%d full=%d",
+        len(c0_cache_screen),
+        len(c0_cache_full),
+    )
+
+    gen_best_entries: list[dict[str, Any]] = []
+    for gen_target in gen_targets:
+        gen_space = space_cfg.get(gen_target, {})
+        if not gen_space:
+            raise KeyError(f"Search space for generator '{gen_target}' not found in {args.space_cfg}")
+        logger.info("genaug tuning start generator=%s", gen_target)
+
+        gen_rows_screen: list[dict] = []
+        gen_trial_payload: dict[str, dict] = {}
+        for t in range(gen_trials):
+            trial_id = f"{gen_target}_genaug_screen_{t:03d}"
+            trial_seed = stable_hash_seed(
+                base_seed, {"target": "genaug_qc", "generator": gen_target, "trial": t, "phase": "screen"}
+            )
+            rng = np.random.default_rng(trial_seed)
+            gen_params = sample_from_space(gen_space, rng)
+            qc_params = sample_from_space(qc_space, rng)
+            rec, tuned_gen_cfg, tuned_qc_cfg = _eval_genaug_trial(
+                trial_id=trial_id,
+                trial_seed=trial_seed,
+                phase="screen",
+                combos=screen_combos,
+                metric=metric,
+                alpha_ratio_ref=alpha_ratio_ref,
+                base_cfg=cfg,
+                eegnet_cfg=eeg_best_cfg,
+                generator_type=gen_target,
+                gen_params=gen_params,
+                qc_params=qc_params,
+                tuning_cfg=tuning_cfg,
+                c0_cache=c0_cache_screen,
+                run_root=tuning_root / "genaug",
+                config_pack=args.config_pack,
+            )
+            append_tuning_trial(trials_csv, rec)
+            write_json(
+                tuning_root / "genaug" / "trials" / f"{trial_id}.json",
+                {"record": rec, "params": {"generator": gen_params, "qc": qc_params}},
+            )
+            gen_rows_screen.append(rec)
+            gen_trial_payload[trial_id] = {
+                "gen_params": gen_params,
+                "qc_params": qc_params,
+                "gen_cfg": tuned_gen_cfg,
+                "qc_cfg": tuned_qc_cfg,
+            }
+            _log_trial(logger, rec)
+
+        gen_rows_screen_ok = [
+            r for r in gen_rows_screen if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))
+        ]
+        gen_top_ids = [r["trial_id"] for r in _sort_trials(gen_rows_screen_ok)[:top_k]]
+        logger.info(
+            "genaug screen done generator=%s valid=%d/%d top_ids=%s",
+            gen_target,
+            len(gen_rows_screen_ok),
+            len(gen_rows_screen),
+            gen_top_ids,
+        )
+
+        gen_rows_confirm: list[dict] = []
+        for tid in gen_top_ids:
+            payload = gen_trial_payload[tid]
+            trial_seed = stable_hash_seed(
+                base_seed, {"target": "genaug_qc", "generator": gen_target, "trial_id": tid, "phase": "confirm"}
+            )
+            rec, tuned_gen_cfg, tuned_qc_cfg = _eval_genaug_trial(
+                trial_id=f"{tid}_confirm",
+                trial_seed=trial_seed,
+                phase="confirm",
+                combos=full_combos,
+                metric=metric,
+                alpha_ratio_ref=alpha_ratio_ref,
+                base_cfg=cfg,
+                eegnet_cfg=eeg_best_cfg,
+                generator_type=gen_target,
+                gen_params=payload["gen_params"],
+                qc_params=payload["qc_params"],
+                tuning_cfg=tuning_cfg,
+                c0_cache=c0_cache_full,
+                run_root=tuning_root / "genaug",
+                config_pack=args.config_pack,
+            )
+            append_tuning_trial(trials_csv, rec)
+            write_json(
+                tuning_root / "genaug" / "trials" / f"{tid}_confirm.json",
+                {"record": rec, "params": {"generator": payload["gen_params"], "qc": payload["qc_params"]}},
+            )
+            gen_rows_confirm.append(rec)
+            gen_trial_payload[f"{tid}_confirm"] = {
+                "gen_params": payload["gen_params"],
+                "qc_params": payload["qc_params"],
+                "gen_cfg": tuned_gen_cfg,
+                "qc_cfg": tuned_qc_cfg,
+            }
+            _log_trial(logger, rec)
+
+        gen_candidates = [
+            r for r in gen_rows_confirm if r.get("status") == "ok" and np.isfinite(r.get("objective_value", np.nan))
+        ]
+        if not gen_candidates:
+            gen_candidates = gen_rows_screen_ok
+        if not gen_candidates:
+            raise RuntimeError(f"No valid GenAug/QC tuning trials for generator={gen_target}.")
+
+        gen_best_row = _sort_trials(gen_candidates)[0]
+        gen_best_payload = json.loads(gen_best_row["params_json"])
+        logger.info(
+            "genaug/qc best generator=%s trial=%s phase=%s obj=%.4f tie=%.4f",
+            gen_target,
+            gen_best_row.get("trial_id"),
+            gen_best_row.get("phase"),
+            float(gen_best_row.get("objective_value", np.nan)),
+            float(gen_best_row.get("tie_break_value", np.nan)),
+        )
+        gen_best_entries.append(
+            {
+                "generator": gen_target,
+                "row": gen_best_row,
+                "payload": gen_best_payload,
+            }
+        )
+
+    if not gen_best_entries:
+        raise RuntimeError("No valid GenAug/QC tuning results.")
+    gen_best_row = _sort_trials([e["row"] for e in gen_best_entries])[0]
+    gen_best_entry = next(e for e in gen_best_entries if e["row"]["trial_id"] == gen_best_row["trial_id"])
+    gen_best_payload = gen_best_entry["payload"]
+    gen_best_generator = str(gen_best_entry["generator"])
+    logger.info(
+        "genaug overall best generator=%s trial=%s obj=%.4f tie=%.4f",
+        gen_best_generator,
         gen_best_row.get("trial_id"),
-        gen_best_row.get("phase"),
         float(gen_best_row.get("objective_value", np.nan)),
         float(gen_best_row.get("tie_break_value", np.nan)),
     )
@@ -697,6 +761,7 @@ def main() -> None:
         "config_pack_base": str(args.config_pack),
         "objective_metric": metric,
         "alpha_ratio_ref": alpha_ratio_ref,
+        "gen_sequence": gen_targets,
         "pilot": {
             "subjects": pilot_subjects,
             "seeds": pilot_seeds,
@@ -721,12 +786,26 @@ def main() -> None:
             "phase": gen_best_row["phase"],
             "objective_value": float(gen_best_row["objective_value"]),
             "tie_break_value": float(gen_best_row["tie_break_value"]),
-            "generator": gen_target,
+            "generator": gen_best_generator,
             "params": {
                 "generator": gen_best_payload.get("generator", {}),
                 "qc": gen_best_payload.get("qc", {}),
             },
         },
+        "genaug_qc_all": [
+            {
+                "generator": str(e["generator"]),
+                "trial_id": e["row"]["trial_id"],
+                "phase": e["row"]["phase"],
+                "objective_value": float(e["row"]["objective_value"]),
+                "tie_break_value": float(e["row"]["tie_break_value"]),
+                "params": {
+                    "generator": e["payload"].get("generator", {}),
+                    "qc": e["payload"].get("qc", {}),
+                },
+            }
+            for e in gen_best_entries
+        ],
     }
     write_json(best_json, summary)
     logger.info("tuning end best_params=%s trials_table=%s", best_json, trials_csv)
