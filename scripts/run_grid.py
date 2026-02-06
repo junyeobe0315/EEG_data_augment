@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 from pathlib import Path
@@ -100,6 +101,40 @@ def _existing_key_set(df) -> set[tuple]:
     for _, row in df.iterrows():
         keys.add(tuple(row.get(k) for k in PRIMARY_KEY_FIELDS))
     return keys
+
+
+def _log_progress(
+    groups_done: int,
+    groups_total: int,
+    rows_appended: int,
+    rows_attempted: int,
+    last_group: tuple[int, int, float],
+    start_time: float,
+) -> None:
+    """Print a concise progress line for the grid run.
+
+    Inputs:
+    - groups_done/groups_total: completed groups and total groups.
+    - rows_appended/rows_attempted: rows actually appended and attempted.
+    - last_group: (subject, seed, r) for the last completed group.
+    - start_time: timestamp when the run started.
+
+    Outputs:
+    - None (prints a single progress line to stdout).
+
+    Internal logic:
+    - Computes elapsed time and prints a one-line summary without verbosity.
+    """
+    elapsed = max(1.0, time.time() - start_time)
+    rate = rows_appended / elapsed
+    subject, seed, r = last_group
+    print(
+        f"[progress] groups {groups_done}/{groups_total} | "
+        f"rows {rows_appended}/{rows_attempted} | "
+        f"last=(S{subject:02d}, seed={seed}, r={r}) | "
+        f"elapsed={elapsed:.0f}s | {rate:.2f} rows/s",
+        flush=True,
+    )
 
 
 def _run_group(
@@ -234,7 +269,7 @@ def main() -> None:
     """Run the experiment grid with stage control and resume-safe behavior.
 
     Inputs:
-    - CLI args: stage, results path, overrides, n_jobs.
+    - CLI args: stage, results path, overrides, n_jobs, log_every_groups.
 
     Outputs:
     - Appends rows to results.csv and writes run artifacts.
@@ -250,6 +285,7 @@ def main() -> None:
     parser.add_argument("--results", type=str, default="results/results.csv")
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--n_jobs", type=int, default=1)
+    parser.add_argument("--log_every_groups", type=int, default=5)
     args = parser.parse_args()
 
     cfg = _load_all_configs(args.override)
@@ -276,6 +312,12 @@ def main() -> None:
     compute_distance = stage != "alpha_search"
 
     groups = [(subject, seed, r) for subject in subjects for seed in seeds for r in r_list]
+    groups_total = len(groups)
+    groups_done = 0
+    rows_appended = 0
+    rows_attempted = 0
+    start_time = time.time()
+    log_every = max(1, int(args.log_every_groups))
 
     if int(args.n_jobs) <= 1:
         for subject, seed, r in groups:
@@ -294,6 +336,11 @@ def main() -> None:
                 appended = append_result(args.results, row)
                 if appended:
                     existing_keys.add(_row_key_tuple(row))
+                    rows_appended += 1
+                rows_attempted += 1
+            groups_done += 1
+            if groups_done % log_every == 0 or groups_done == groups_total:
+                _log_progress(groups_done, groups_total, rows_appended, rows_attempted, (subject, seed, r), start_time)
         return
 
     ctx = mp.get_context("spawn")
@@ -314,11 +361,17 @@ def main() -> None:
             for subject, seed, r in groups
         }
         for fut in as_completed(futures):
+            subject, seed, r = futures[fut]
             rows = fut.result()
             for row in rows:
                 appended = append_result(args.results, row)
                 if appended:
                     existing_keys.add(_row_key_tuple(row))
+                    rows_appended += 1
+                rows_attempted += 1
+            groups_done += 1
+            if groups_done % log_every == 0 or groups_done == groups_total:
+                _log_progress(groups_done, groups_total, rows_appended, rows_attempted, (subject, seed, r), start_time)
 
 
 if __name__ == "__main__":
